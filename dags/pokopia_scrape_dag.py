@@ -8,7 +8,11 @@ aux règles du site et aux obligations légales applicables.
 
 Montures Docker : ``./dags`` -> ``/opt/airflow/dags``. CSV : ``dags/data/pokemon_pokopia/items.csv``.
 
-Variable ``POKOPIA_SCRAPE_LIMIT`` (défaut 10). Variable ``POKOPIA_WRITE_STAGING`` (``true`` / ``false``, défaut ``false``).
+Variable ``POKOPIA_SCRAPE_LIMIT`` : nombre max d’espèces à scraper (**0** = toute la liste).
+Défaut **0**. Variable ``POKOPIA_WRITE_STAGING`` (``true`` / ``false``, défaut ``false``).
+
+Les **GRANT** en lecture pour Streamlit se font **à la main** en SQL (voir page doc Pokopia) ; le DAG ne fait
+que **TRUNCATE + INSERT** pour ne pas supprimer les droits entre deux runs.
 
 Connexion Postgres : ``DATA-DB`` — doit viser **la même base applicative** que Streamlit
 (variables ``APP_DB_*`` / secrets), pas la base interne Airflow seule.
@@ -38,7 +42,7 @@ def pokopia_scrape_dag():
         from pokopia_db import refresh_pokopia_tables
         from pokopia_scrape_lib import run_pipeline, write_tables_to_staging
 
-        limit = int(Variable.get("POKOPIA_SCRAPE_LIMIT", default_var="10"))
+        limit = int(Variable.get("POKOPIA_SCRAPE_LIMIT", default_var="0"))
         tables = run_pipeline(limit=limit, items_csv=None)
         counts = refresh_pokopia_tables(tables, postgres_conn_id="DATA-DB")
 
