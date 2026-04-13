@@ -1,8 +1,8 @@
 import pandas as pd
 import os
 from dotenv import load_dotenv
-from .logger import get_logger
-from .db_utils import get_connection, execute_query
+from utils.logger import get_logger
+from utils.db_utils import get_connection, execute_query
 from psycopg2.extras import execute_values
 
 load_dotenv()
