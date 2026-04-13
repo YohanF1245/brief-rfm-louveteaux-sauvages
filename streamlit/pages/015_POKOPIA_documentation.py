@@ -16,6 +16,16 @@ st.set_page_config(
 
 _DOT_PATH = Path(__file__).resolve().parents[1] / "data" / "pokopia_er.dot"
 
+# Styles page : éviter que le premier bloc (iframe hero) soit rogné sous la barre Streamlit.
+_PAGE_STYLE = """
+<style>
+  .block-container { padding-top: 1.5rem !important; }
+  [data-testid="stAppViewContainer"] .main .block-container {
+    padding-top: 1.5rem !important;
+  }
+</style>
+"""
+
 
 def _hero_html() -> str:
     return """
@@ -26,24 +36,38 @@ def _hero_html() -> str:
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;800&display=swap" rel="stylesheet">
   <style>
-    body { margin:0; font-family:Manrope, sans-serif;
+    html { box-sizing: border-box; }
+    *, *::before, *::after { box-sizing: inherit; }
+    body {
+      margin: 0;
+      font-family: Manrope, sans-serif;
       background: linear-gradient(125deg,#090f22,#1a0f38 50%,#0b2238);
-      color:#e8ecff; padding:16px 20px; border-radius:20px; }
-    .titre {
-      font-size:clamp(1.6rem,4vw,2.6rem); font-weight:800; margin:0 0 6px;
-      background:linear-gradient(90deg,#ff4fd8,#64f9ff,#ffd86b);
-      -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+      color: #e8ecff;
+      padding: 28px 22px 22px;
+      border-radius: 20px;
+      overflow: visible;
     }
-    .soustitre { margin:0; color:#9fb4ff; letter-spacing:.12em; font-size:.78rem;
-      text-transform:uppercase; }
-    .badge { display:inline-block; margin-top:12px; padding:6px 12px; border-radius:999px;
-      border:1px solid rgba(255,255,255,.2); font-size:.75rem; color:#dffcff;
-      background:rgba(100,249,255,.08); }
+    .titre {
+      font-size: clamp(1.5rem, 3.8vw, 2.45rem);
+      font-weight: 800;
+      line-height: 1.2;
+      margin: 0 0 8px;
+      padding: 6px 0 2px;
+      background: linear-gradient(90deg,#ff4fd8,#64f9ff,#ffd86b);
+      background-clip: text;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .soustitre { margin: 0; color: #9fb4ff; letter-spacing: .12em; font-size: .78rem;
+      text-transform: uppercase; }
+    .badge { display: inline-block; margin-top: 12px; padding: 6px 12px; border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.2); font-size: .75rem; color: #dffcff;
+      background: rgba(100,249,255,.08); }
   </style>
 </head>
 <body>
-  <h1 class="titre animate__animated animate__fadeInDown">Pokopia — Documentation</h1>
-  <p class="soustitre animate__animated animate__fadeInUp animate__delay-1s">
+  <h1 class="titre animate__animated animate__fadeIn">Pokopia — Documentation</h1>
+  <p class="soustitre animate__animated animate__fadeIn animate__delay-1s">
     Stack, modèle de données, rappels légaux
   </p>
   <span class="badge animate__animated animate__pulse animate__infinite animate__slow">
@@ -54,16 +78,10 @@ def _hero_html() -> str:
 """
 
 
-components.html(_hero_html(), height=200, scrolling=False)
+st.markdown(_PAGE_STYLE, unsafe_allow_html=True)
 
-st.markdown(
-    """
-<style>
-  .block-container { padding-top: 1rem !important; }
-</style>
-""",
-    unsafe_allow_html=True,
-)
+# Hauteur suffisante + pas de fade depuis le haut (évite lettres coupées dans l’iframe).
+components.html(_hero_html(), height=248, scrolling=False)
 
 st.markdown("## Stack (aperçu)")
 st.markdown(
