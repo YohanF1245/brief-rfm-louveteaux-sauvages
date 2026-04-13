@@ -52,7 +52,6 @@ def _load_pokemon_rows() -> list[dict]:
     return [{"nom": r[0], "num": r[1]} for r in rows]
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 # Ordre d’affichage aligné sur pokopia_scrape_lib (chair → relaxation, etc.)
 _CATEGORY_ORDER: tuple[str, ...] = ("relaxation", "decoration", "tot")
 _CATEGORY_LABELS: dict[str, str] = {
@@ -307,9 +306,9 @@ except Exception as e:
     st.caption(str(e))
     if "permission denied" in err:
         st.info(
-            "L’utilisateur Streamlit (ex. `streamlit-zz98y`) doit avoir **USAGE** sur le schéma `pokopia` "
+            "Le rôle Postgres utilisé par Streamlit (**APP_DB_***) doit avoir **USAGE** sur le schéma `pokopia` "
             "et **SELECT** sur les tables : voir l’onglet **Pokopia documentation** pour le SQL **GRANT** à exécuter à la main "
-            "(le propriétaire des tables est en général l’utilisateur **DATA-DB**, ex. `airflow-xe3z`)."
+            "(propriétaire des tables = le rôle de la connexion **DATA-DB** du DAG, distinct du compte Streamlit)."
         )
     st.stop()
 
