@@ -2,6 +2,9 @@
 Schéma PostgreSQL ``pokopia`` + chargement des tables produites par ``pokopia_scrape_lib``.
 
 Connexion Airflow : ``DATA-DB`` (identique au pipeline RFM / app Postgres).
+
+Les droits **SELECT** pour l’app Streamlit (utilisateur différent du DAG) se configurent **en SQL à la main** ;
+le chargement utilise **TRUNCATE** (pas ``DROP SCHEMA``) pour conserver les GRANT entre deux exécutions du DAG.
 """
 
 from __future__ import annotations
@@ -87,14 +90,30 @@ def ensure_tables(conn) -> None:
     conn.commit()
 
 
+TRUNCATE_TABLES_SQL = f"""
+TRUNCATE TABLE
+    {SCHEMA}.item,
+    {SCHEMA}.pokemon_favorite,
+    {SCHEMA}.pokemon_specialty,
+    {SCHEMA}.pokemon,
+    {SCHEMA}.favorite,
+    {SCHEMA}.specialty,
+    {SCHEMA}.ideal_habitat,
+    {SCHEMA}.type,
+    {SCHEMA}.category,
+    {SCHEMA}.gift_theme
+RESTART IDENTITY CASCADE
+"""
+
+
 def refresh_pokopia_tables(
     tables: dict[str, list[dict[str, Any]]],
     *,
     postgres_conn_id: str = "DATA-DB",
 ) -> dict[str, int]:
     """
-    Recrée le contenu du schéma ``pokopia`` (TRUNCATE puis INSERT).
-    Retourne le nombre de lignes insérées par table logique.
+    Vide puis recharge le schéma ``pokopia`` (**TRUNCATE** des tables, pas DROP SCHEMA)
+    pour que les **GRANT** définis à la main en base soient conservés entre deux runs du DAG.
     """
     try:
         from airflow.providers.postgres.hooks.postgres import PostgresHook
@@ -105,12 +124,9 @@ def refresh_pokopia_tables(
     conn = hook.get_conn()
     counts: dict[str, int] = {}
     try:
-        with conn.cursor() as cur:
-            cur.execute(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE")
-        conn.commit()
         ensure_tables(conn)
-
         with conn.cursor() as cur:
+            cur.execute(TRUNCATE_TABLES_SQL)
 
             def ins(sql: str, rows: list[tuple]) -> int:
                 if not rows:
