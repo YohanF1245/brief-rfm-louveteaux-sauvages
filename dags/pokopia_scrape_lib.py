@@ -26,8 +26,8 @@ Modèle objets (items.csv) :
   - item (PK gift_theme_valeur, type_valeur, name) — FK gift_theme, FK type
 
 Liaison favorite (scraping) <-> gift_theme (CSV) : vocabulaires différents
-(Serebii « Soft stuff », CSV « Soft Stuff », etc.). Une table de correspondance
-pourra être ajoutée plus tard (favorite_valeur <-> gift_theme_valeur).
+(Serebii « Lots of water », CSV « Water », etc.). Le planificateur Streamlit applique
+une résolution heuristique ; une table SQL de correspondance pourrait compléter.
 
 Dépendances : pip install requests beautifulsoup4
 
@@ -48,7 +48,8 @@ from typing import Iterable
 BASE = "https://www.serebii.net"
 LIST_URL = f"{BASE}/pokemonpokopia/availablepokemon.shtml"
 POKEDEX_PREFIX = "/pokemonpokopia/pokedex/"
-LIMIT = 10
+# 0 = pas de limite (toute la liste Pokopia sur la page « available »).
+LIMIT = 0
 
 SLUG_RE = re.compile(r"^/pokemonpokopia/pokedex/([^/]+)\.shtml$")
 
@@ -161,7 +162,7 @@ def first_pokedex_slugs_from_list(html: str, limit: int) -> list[str]:
             continue
         seen.add(slug)
         slugs.append(slug)
-        if len(slugs) >= limit:
+        if limit > 0 and len(slugs) >= limit:
             break
     return slugs
 
@@ -410,12 +411,15 @@ def print_schema(tables: dict[str, list[dict]]) -> None:
             )
 
 
-def run_pipeline(*, limit: int = 10, items_csv: Path | None = None) -> dict[str, list[dict]]:
-    """Scrape Serebii, fusionne les tables objets depuis items.csv, retourne toutes les tables."""
+def run_pipeline(*, limit: int = 0, items_csv: Path | None = None) -> dict[str, list[dict]]:
+    """Scrape Serebii, fusionne les tables objets depuis items.csv, retourne toutes les tables.
+
+    ``limit`` : nombre max d’espèces (ordre liste Serebii). **0** = pas de limite.
+    """
     _require_deps()
     list_html = fetch_html(LIST_URL)
     slugs = first_pokedex_slugs_from_list(list_html, limit)
-    if len(slugs) < limit:
+    if limit > 0 and len(slugs) < limit:
         print(f"Avertissement : seulement {len(slugs)} entrées trouvées.", file=sys.stderr)
 
     rows: list[PokemonRow] = []
