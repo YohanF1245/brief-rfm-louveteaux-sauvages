@@ -89,6 +89,7 @@ st.markdown(
 - **Scraping** Serebii (fiches Pokopia) pour numéro, nom, spécialités, habitat idéal, favoris — **à but scolaire uniquement** (projet d’apprentissage ; ne pas répliquer en production sans respecter le site source et le cadre légal).
 - **CSV** interne pour les thèmes cadeaux et les objets (combos « opti » par thème).
 - **DAG Airflow** `pokopia_scrape_dag` qui fusionne les deux sources et **alimente PostgreSQL** (schéma ``pokopia``).
+- Variable **POKOPIA_SCRAPE_LIMIT** : **0** (défaut) = toute la liste Pokopia côté Serebii ; une valeur **N** positive limite aux **N** premières espèces (tests plus courts).
 
 ### Droits PostgreSQL (à la main)
 
