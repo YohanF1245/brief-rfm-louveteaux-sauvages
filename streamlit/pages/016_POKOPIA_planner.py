@@ -5,6 +5,7 @@ Pokopia : planificateur (lecture PostgreSQL schéma pokopia).
 from __future__ import annotations
 
 import os
+import re
 from collections import defaultdict
 from html import escape
 
@@ -59,6 +60,79 @@ _CATEGORY_LABELS: dict[str, str] = {
     "decoration": "Décoration",
     "tot": "Petits objets & jouets",
 }
+# Libellés courts dans le tableau par Pokémon (alignés sur category.valeur).
+_MATRIX_ITEM_LABELS: dict[str, str] = {
+    "relaxation": "Siège",
+    "decoration": "Déco",
+    "tot": "Jouet",
+}
+
+
+def _favorite_to_gift_theme(fav: str, themes: tuple[str, ...]) -> str | None:
+    """
+    Rapproche un libellé « Favorites » Serebii d’une valeur ``gift_theme`` du CSV
+    (ex. « Lots of nature » → « Nature », « Soft stuff » → « Soft Stuff »).
+    """
+    if not fav or not themes:
+        return None
+    lower_to_canon = {t.lower(): t for t in themes}
+    s = fav.strip()
+    lo = s.lower()
+    if lo in lower_to_canon:
+        return lower_to_canon[lo]
+    m = re.match(r"^lots\s+of\s+(.+)$", s, flags=re.I)
+    if m:
+        tail = m.group(1).strip()
+        tail_lo = tail.lower()
+        if tail_lo in lower_to_canon:
+            return lower_to_canon[tail_lo]
+        cand = " ".join(w.capitalize() for w in tail.split())
+        if cand.lower() in lower_to_canon:
+            return lower_to_canon[cand.lower()]
+    cand2 = " ".join(w.capitalize() for w in s.split())
+    if cand2.lower() in lower_to_canon:
+        return lower_to_canon[cand2.lower()]
+    if lo.endswith(" stuff"):
+        base_lo = lo[: -len(" stuff")].strip()
+        cand3 = base_lo.capitalize() + " Stuff"
+        if cand3.lower() in lower_to_canon:
+            return lower_to_canon[cand3.lower()]
+    return None
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_gift_themes() -> tuple[str, ...]:
+    conn = _db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT valeur FROM pokopia.gift_theme ORDER BY valeur")
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return tuple(r[0] for r in rows)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_items_triplets_by_theme() -> dict[str, dict[str, str]]:
+    """Pour chaque thème CSV : noms d’item par ``category.valeur`` (relaxation / decoration / tot)."""
+    conn = _db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT i.gift_theme_valeur, c.valeur AS category_valeur, i.name
+                FROM pokopia.item i
+                JOIN pokopia.type t ON t.valeur = i.type_valeur
+                JOIN pokopia.category c ON c.valeur = t.category_valeur
+                """
+            )
+            raw = cur.fetchall()
+    finally:
+        conn.close()
+    out: dict[str, dict[str, str]] = defaultdict(dict)
+    for gift_theme, cat, name in raw:
+        out[gift_theme][cat] = name
+    return dict(out)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -169,7 +243,42 @@ def _hero_html() -> str:
 """
 
 
-def _favorites_matrix_html(rows: list[dict]) -> str:
+def _favorite_cell_html(
+    fav: str,
+    *,
+    triplets: dict[str, dict[str, str]],
+    themes: tuple[str, ...],
+) -> str:
+    if not fav:
+        return "—"
+    theme = _favorite_to_gift_theme(fav, themes)
+    trip = triplets.get(theme) if theme else None
+    lines = [f'<div class="fav-title">{escape(fav)}</div>']
+    if theme and trip is not None:
+        inner = "".join(
+            f'<div class="fav-line"><span class="k">{escape(_MATRIX_ITEM_LABELS.get(cat, cat))}</span>'
+            f" — {escape(trip.get(cat, '—'))}</div>"
+            for cat in _CATEGORY_ORDER
+        )
+        lines.append(f'<div class="fav-grid">{inner}</div>')
+    elif theme:
+        lines.append(
+            '<div class="fav-muted">Thème reconnu sans ligne <code>item</code> en base.</div>'
+        )
+    else:
+        lines.append(
+            '<div class="fav-muted">Pas d’objets CSV pour ce libellé '
+            "(favori Serebii ≠ thème <code>gift_theme</code>).</div>"
+        )
+    return f'<div class="fav-block">{"".join(lines)}</div>'
+
+
+def _favorites_matrix_html(
+    rows: list[dict],
+    *,
+    triplets: dict[str, dict[str, str]],
+    themes: tuple[str, ...],
+) -> str:
     if not rows:
         return "<p style='color:#aab;'>Sélectionne au moins un Pokémon.</p>"
     max_len = max(len(r.get("favorites") or []) for r in rows)
@@ -182,8 +291,9 @@ def _favorites_matrix_html(rows: list[dict]) -> str:
         tds = []
         for r in rows:
             favs = r.get("favorites") or []
-            cell = favs[i] if i < len(favs) else ""
-            tds.append(f"<td>{escape(cell) if cell else '—'}</td>")
+            fav = favs[i] if i < len(favs) else ""
+            inner = _favorite_cell_html(fav, triplets=triplets, themes=themes) if fav else "—"
+            tds.append(f"<td>{inner}</td>")
         body_rows.append("<tr>" + "".join(tds) + "</tr>")
     return f"""
 <div class="matrix-wrap animate__animated animate__zoomIn">
@@ -282,7 +392,13 @@ def _matrix_shell(inner: str) -> str:
     table.matrix {{ border-collapse:collapse; width:100%; min-width:520px; }}
     table.matrix th, table.matrix td {{
       border:1px solid rgba(255,255,255,.12); padding:10px 12px; text-align:left;
-      vertical-align:top; font-size:0.92rem; }}
+      vertical-align:top; font-size:0.88rem; }}
+    .fav-block {{ min-width: 12rem; }}
+    .fav-title {{ font-weight:700; color:#fff; margin-bottom:6px; font-size:0.9rem; }}
+    .fav-grid {{ display:flex; flex-direction:column; gap:4px; }}
+    .fav-line {{ font-size:0.82rem; color:#dfe7ff; line-height:1.35; }}
+    .fav-line .k {{ color:#9fb4ff; font-weight:600; min-width:3.2rem; display:inline-block; }}
+    .fav-muted {{ font-size:0.78rem; color:#8a9bc4; margin-top:4px; line-height:1.3; }}
     table.matrix th {{
       background: linear-gradient(180deg, rgba(255,79,216,.18), rgba(100,249,255,.08));
       color:#fff; font-weight:700; }}
@@ -335,20 +451,7 @@ if not base_rows:
     )
     st.stop()
 
-filtre = st.text_input(
-    "Filtrer la liste (ex. **mew** → Mew, Mewtwo)",
-    value="",
-    placeholder="mew, pika, …",
-    key="pokopia_filter",
-)
-
-q = (filtre or "").strip().lower()
-if q:
-    filtered = [r for r in base_rows if q in (r.get("nom") or "").lower()]
-else:
-    filtered = base_rows
-
-noms = [r["nom"] for r in filtered]
+noms = [r["nom"] for r in base_rows]
 selected_labels = st.multiselect(
     "Choisis jusqu’à **4** Pokémon",
     options=noms,
@@ -356,7 +459,7 @@ selected_labels = st.multiselect(
     max_selections=4,
 )
 
-selected_meta = [r for r in filtered if r.get("nom") in selected_labels]
+selected_meta = [r for r in base_rows if r.get("nom") in selected_labels]
 if selected_meta:
     fav_map = _load_favorites_map(tuple(r["nom"] for r in selected_meta))
     selected = [
@@ -366,12 +469,26 @@ if selected_meta:
 else:
     selected = []
 
+try:
+    gift_themes = _load_gift_themes()
+    item_triplets = _load_items_triplets_by_theme()
+except Exception as e:
+    gift_themes = tuple()
+    item_triplets = {}
+    st.warning(f"Lecture thèmes / items pour le tableau : {e}")
+
 if selected:
-    inner = _favorites_matrix_html(selected)
-    h = min(620, 140 + max(len(r.get("favorites") or []) for r in selected) * 52)
+    inner = _favorites_matrix_html(
+        selected, triplets=item_triplets, themes=gift_themes
+    )
+    max_favs = max(len(r.get("favorites") or []) for r in selected)
+    h = min(980, 160 + max_favs * 108)
     components.html(_matrix_shell(inner), height=int(h), scrolling=True)
 else:
-    st.info("Sélectionne un ou plusieurs Pokémon pour afficher le tableau des préférences « stuff ».")
+    st.info(
+        "Sélectionne un ou plusieurs Pokémon pour afficher le tableau : chaque favori "
+        "avec les **3 objets** du CSV (siège, déco, jouet) lorsque le libellé correspond à un thème."
+    )
 
 st.markdown("### Catalogue cadeaux par catégorie")
 st.caption(
@@ -391,5 +508,6 @@ items_h = min(900, 120 + n_items * 34 + len(items_by_cat) * 48)
 components.html(_items_catalog_shell(inner_items), height=int(items_h), scrolling=True)
 
 st.caption(
-    "Source : tables `pokopia.*` (favoris via `pokemon_favorite.ordre`, items via jointure item → type → category)."
+    "Source : `pokemon_favorite` + `item` / `gift_theme`. Liste Pokopia complète : variable Airflow "
+    "**POKOPIA_SCRAPE_LIMIT** = **0** (défaut) puis relancer **pokopia_scrape_dag** si la BDD ne contient encore que 10 lignes."
 )
