@@ -74,16 +74,16 @@ st.markdown(
 
 ### Droits PostgreSQL (à la main)
 
-- Le **DAG** (connexion **DATA-DB**) crée et remplit le schéma sous l’utilisateur Postgres du worker, par ex. **`airflow-xe3z`**.
-- **Streamlit** lit la même base avec un autre utilisateur, par ex. **`streamlit-zz98y`** (SELECT uniquement).
+- Le **DAG** (connexion **DATA-DB**) crée et remplit le schéma sous le **rôle Postgres** associé à cette connexion (chez toi : le login réel généré par ta plateforme, à ne pas commiter dans la doc).
+- **Streamlit** lit la même base avec un **autre** rôle (celui de **APP_DB_***, lecture seule sur `pokopia`).
 
-À exécuter **une fois** (ou après changement de schéma), connecté en superuser ou en **propriétaire** des objets (`airflow-xe3z`), en adaptant les noms entre guillemets si ton instance utilise d’autres logins :
+À exécuter **une fois** (ou après changement de schéma), connecté en superuser ou en **propriétaire** des objets. Remplace `pokopia_dag_owner` et `pokopia_app_reader` par **tes** noms de rôles ; en cas de tirets ou caractères spéciaux, entoure-les de **guillemets doubles** en SQL.
 
 ```sql
-GRANT USAGE ON SCHEMA pokopia TO "streamlit-zz98y";
-GRANT SELECT ON ALL TABLES IN SCHEMA pokopia TO "streamlit-zz98y";
-ALTER DEFAULT PRIVILEGES FOR ROLE "airflow-xe3z" IN SCHEMA pokopia
-  GRANT SELECT ON TABLES TO "streamlit-zz98y";
+GRANT USAGE ON SCHEMA pokopia TO pokopia_app_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA pokopia TO pokopia_app_reader;
+ALTER DEFAULT PRIVILEGES FOR ROLE pokopia_dag_owner IN SCHEMA pokopia
+  GRANT SELECT ON TABLES TO pokopia_app_reader;
 ```
 
 Le DAG ne fait **aucun** GRANT automatique : il se contente de **TRUNCATE + INSERT** pour que ces droits restent valides d’un run à l’autre.
