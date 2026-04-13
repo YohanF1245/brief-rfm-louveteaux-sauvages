@@ -2,7 +2,12 @@
 """
 Logique scraping Pokopia (Serebii + items) pour Airflow et scripts CLI.
 
-Le fichier items.csv doit vivir sous ``dags/data/pokemon_pokopia/`` pour être
+**Scraping** : mis en œuvre **à but exclusivement scolaire** (exercice pédagogique).
+Hors projet de formation, respecter les conditions d'usage du site tiers
+(robots.txt, charge raisonnable, droits d'auteur) et ne pas reproduire ce mode
+opératoire en production sans cadre légal adapté.
+
+Le fichier items.csv doit vivre sous ``dags/data/pokemon_pokopia/`` pour être
 visible dans les conteneurs (seul ``./dags`` est monté sur ``/opt/airflow/dags``).
 Une copie peut exister dans ``pokemon/items.csv`` pour exécution hors Docker.
 
@@ -11,8 +16,8 @@ Modèle relationnel (3FN) — espèces (Serebii) :
   - specialty (PK valeur)
   - ideal_habitat (PK valeur)
   - favorite (PK valeur) — libellés « Favorites » sur la fiche Pokémon
-  - pokemon_specialty (PK pokemon_nom, specialty_valeur) — N-N
-  - pokemon_favorite (PK pokemon_nom, favorite_valeur) — N-N
+  - pokemon_specialty (PK pokemon_nom + ordre ; FK specialty) — N-N
+  - pokemon_favorite (PK pokemon_nom + ordre ; FK favorite) — N-N
 
 Modèle objets (items.csv) :
   - gift_theme (PK valeur) — 1re colonne du CSV (axe de préférence / thème)
@@ -243,13 +248,17 @@ def build_normalized_tables(rows: Iterable[PokemonRow]) -> dict[str, list[dict]]
 
     pokemon_specialty = []
     for r in rows:
-        for s in r.specialties:
-            pokemon_specialty.append({"pokemon_nom": r.nom, "specialty_valeur": s})
+        for i, s in enumerate(r.specialties, start=1):
+            pokemon_specialty.append(
+                {"pokemon_nom": r.nom, "specialty_valeur": s, "ordre": i}
+            )
 
     pokemon_favorite = []
     for r in rows:
-        for f in r.favorites:
-            pokemon_favorite.append({"pokemon_nom": r.nom, "favorite_valeur": f})
+        for i, f in enumerate(r.favorites, start=1):
+            pokemon_favorite.append(
+                {"pokemon_nom": r.nom, "favorite_valeur": f, "ordre": i}
+            )
 
     return {
         "pokemon": table_pokemon,
@@ -357,15 +366,17 @@ def print_schema(tables: dict[str, list[dict]]) -> None:
     )
     for row in tables["pokemon_specialty"]:
         print(
-            f"  pokemon_nom={row['pokemon_nom']!r}  specialty_valeur={row['specialty_valeur']!r}"
+            f"  pokemon_nom={row['pokemon_nom']!r}  specialty_valeur={row['specialty_valeur']!r}  "
+            f"ordre={row['ordre']!r}"
         )
 
     print(
-        "\n=== Table pokemon_favorite (PK = (pokemon_nom, favorite_valeur) | N-N) ==="
+        "\n=== Table pokemon_favorite (PK = (pokemon_nom, ordre) | N-N) ==="
     )
     for row in tables["pokemon_favorite"]:
         print(
-            f"  pokemon_nom={row['pokemon_nom']!r}  favorite_valeur={row['favorite_valeur']!r}"
+            f"  pokemon_nom={row['pokemon_nom']!r}  favorite_valeur={row['favorite_valeur']!r}  "
+            f"ordre={row['ordre']!r}"
         )
 
     if "gift_theme" in tables:
