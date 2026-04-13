@@ -53,6 +53,48 @@ def _load_pokemon_rows() -> list[dict]:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
+# Ordre d’affichage aligné sur pokopia_scrape_lib (chair → relaxation, etc.)
+_CATEGORY_ORDER: tuple[str, ...] = ("relaxation", "decoration", "tot")
+_CATEGORY_LABELS: dict[str, str] = {
+    "relaxation": "Relaxation (siège)",
+    "decoration": "Décoration",
+    "tot": "Petits objets & jouets",
+}
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_items_by_category() -> dict[str, list[dict[str, str]]]:
+    """Charge les items avec jointure type → category, groupés par catégorie."""
+    conn = _db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT c.valeur AS category_valeur,
+                       i.gift_theme_valeur,
+                       i.type_valeur,
+                       i.name
+                FROM pokopia.item i
+                JOIN pokopia.type t ON t.valeur = i.type_valeur
+                JOIN pokopia.category c ON c.valeur = t.category_valeur
+                ORDER BY c.valeur, i.gift_theme_valeur, i.type_valeur, i.name
+                """
+            )
+            raw = cur.fetchall()
+    finally:
+        conn.close()
+    by_cat: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for cat, gift_theme, type_v, name in raw:
+        by_cat[cat].append(
+            {
+                "gift_theme": gift_theme,
+                "type": type_v,
+                "name": name,
+            }
+        )
+    return dict(by_cat)
+
+
 def _load_favorites_map(noms: tuple[str, ...]) -> dict[str, list[str]]:
     if not noms:
         return {}
@@ -137,6 +179,76 @@ def _favorites_matrix_html(rows: list[dict]) -> str:
     <tbody>{"".join(body_rows)}</tbody>
   </table>
 </div>
+"""
+
+
+def _items_by_category_html(by_category: dict[str, list[dict[str, str]]]) -> str:
+    if not by_category:
+        return "<p class='muted'>Aucun item dans <code>pokopia.item</code> (vérifie le DAG et items.csv).</p>"
+    blocks: list[str] = []
+    seen: set[str] = set()
+    for cat in _CATEGORY_ORDER:
+        items = by_category.get(cat) or []
+        seen.add(cat)
+        if not items:
+            continue
+        label = _CATEGORY_LABELS.get(cat, escape(cat))
+        lis = "".join(
+            f"<li><span class='iname'>{escape(it['name'])}</span>"
+            f"<span class='imeta'> — thème « {escape(it['gift_theme'])} » · type {escape(it['type'])}</span></li>"
+            for it in items
+        )
+        blocks.append(
+            f"<section class='cat-block animate__animated animate__fadeInUp'>"
+            f"<h3 class='cat-title'>{label}</h3><ul class='item-list'>{lis}</ul></section>"
+        )
+    for cat in sorted(set(by_category) - seen):
+        items = by_category[cat]
+        label = _CATEGORY_LABELS.get(cat, escape(cat))
+        lis = "".join(
+            f"<li><span class='iname'>{escape(it['name'])}</span>"
+            f"<span class='imeta'> — thème « {escape(it['gift_theme'])} » · type {escape(it['type'])}</span></li>"
+            for it in items
+        )
+        blocks.append(
+            f"<section class='cat-block'><h3 class='cat-title'>{label}</h3>"
+            f"<ul class='item-list'>{lis}</ul></section>"
+        )
+    return "".join(blocks)
+
+
+def _items_catalog_shell(inner: str) -> str:
+    return f"""
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" />
+  <style>
+    body {{ margin:0; padding:14px 12px;
+      background: radial-gradient(circle at 15% 0%, rgba(255,214,107,.12), transparent 42%),
+                  radial-gradient(circle at 85% 10%, rgba(100,249,255,.1), transparent 40%),
+                  linear-gradient(165deg,#0c1028,#121832);
+      font-family: system-ui, sans-serif; color:#e8ecff; border-radius:16px; }}
+    .muted {{ color:#8a9bc4; font-size:0.9rem; }}
+    .cat-block {{ margin-bottom:22px; }}
+    .cat-block:last-child {{ margin-bottom:4px; }}
+    .cat-title {{
+      font-size:1.05rem; font-weight:800; margin:0 0 10px;
+      padding-bottom:6px; border-bottom:1px solid rgba(255,255,255,.15);
+      background:linear-gradient(90deg,#ffd86b,#64f9ff);
+      -webkit-background-clip:text; -webkit-text-fill-color:transparent; }}
+    ul.item-list {{ list-style:none; padding:0; margin:0; }}
+    ul.item-list li {{
+      padding:8px 10px; margin:4px 0; border-radius:10px;
+      background:rgba(255,255,255,.04);
+      border:1px solid rgba(255,255,255,.08); font-size:0.9rem; }}
+    .iname {{ font-weight:600; color:#fff; }}
+    .imeta {{ color:#9fb4ff; font-size:0.82rem; }}
+  </style>
+</head>
+<body>{inner}</body>
+</html>
 """
 
 
@@ -245,6 +357,23 @@ if selected:
 else:
     st.info("Sélectionne un ou plusieurs Pokémon pour afficher le tableau des préférences « stuff ».")
 
+st.markdown("### Catalogue cadeaux par catégorie")
 st.caption(
-    "Source : tables `pokopia.*` (favoris ordonnés via `pokemon_favorite.ordre`)."
+    "Items issus de `pokopia.item` + `type` + `category` (relaxation = siège, décoration = moyen, petits objets = TOT)."
+)
+
+try:
+    items_by_cat = _load_items_by_category()
+except Exception as e:
+    st.warning(f"Lecture des items impossible : {e}")
+    items_by_cat = {}
+
+n_items = sum(len(v) for v in items_by_cat.values())
+inner_items = _items_by_category_html(items_by_cat)
+# Hauteur dynamique : en-têtes + lignes (~36px par item + marges)
+items_h = min(900, 120 + n_items * 34 + len(items_by_cat) * 48)
+components.html(_items_catalog_shell(inner_items), height=int(items_h), scrolling=True)
+
+st.caption(
+    "Source : tables `pokopia.*` (favoris via `pokemon_favorite.ordre`, items via jointure item → type → category)."
 )
