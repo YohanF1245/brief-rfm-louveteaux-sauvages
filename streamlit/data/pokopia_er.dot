@@ -1,0 +1,26 @@
+digraph pokopia {
+  graph [rankdir=LR, fontsize=10, labelloc=t, label="Schema pokopia (PostgreSQL)"];
+  node [shape=box, style="rounded,filled", fillcolor="#1a1f35", fontcolor="#e8ecff", fontname="Helvetica"];
+  edge [color="#64a0ff", fontcolor="#9fb4ff"];
+
+  ideal_habitat [label="ideal_habitat\nPK: valeur"];
+  specialty [label="specialty\nPK: valeur"];
+  favorite [label="favorite\nPK: valeur"];
+  pokemon [label="pokemon\nPK: nom | num\nFK → ideal_habitat"];
+  pokemon_specialty [label="pokemon_specialty\nPK: (pokemon_nom, ordre)\nFK → pokemon, specialty", shape=diamond, fillcolor="#2a2040"];
+  pokemon_favorite [label="pokemon_favorite\nPK: (pokemon_nom, ordre)\nFK → pokemon, favorite", shape=diamond, fillcolor="#2a2040"];
+
+  category [label="category\nPK: valeur"];
+  type [label="type\nPK: valeur\nFK → category"];
+  gift_theme [label="gift_theme\nPK: valeur"];
+  item [label="item\nPK: (gift_theme, type, name)\nFK → gift_theme, type"];
+
+  ideal_habitat -> pokemon [label=" FK"];
+  pokemon -> pokemon_specialty [label="1-N"];
+  specialty -> pokemon_specialty [label="1-N"];
+  pokemon -> pokemon_favorite [label="1-N"];
+  favorite -> pokemon_favorite [label="1-N"];
+  category -> type [label=" FK"];
+  gift_theme -> item [label=" FK"];
+  type -> item [label=" FK"];
+}
