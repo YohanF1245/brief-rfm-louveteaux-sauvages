@@ -10,6 +10,8 @@ Montures Docker : ``./dags`` -> ``/opt/airflow/dags``. CSV : ``dags/data/pokemon
 
 Variable ``POKOPIA_SCRAPE_LIMIT`` : nombre max d’espèces à scraper (**0** = toute la liste).
 Défaut **0**. Variable ``POKOPIA_WRITE_STAGING`` (``true`` / ``false``, défaut ``false``).
+Variable ``POKOPIA_ITEMS_ONLY`` (``true`` / ``false``, défaut ``false``) : recharge
+uniquement les tables alimentées par ``items.csv`` sans rescraper Serebii.
 
 Les **GRANT** en lecture pour Streamlit se font **à la main** en SQL (voir page doc Pokopia) ; le DAG ne fait
 que **TRUNCATE + INSERT** pour ne pas supprimer les droits entre deux runs.
@@ -40,11 +42,29 @@ def pokopia_scrape_dag():
         from pathlib import Path
 
         from pokopia_db import refresh_pokopia_tables
-        from pokopia_scrape_lib import run_pipeline, write_tables_to_staging
+        from pokopia_scrape_lib import (
+            build_item_tables_from_csv,
+            resolve_items_csv,
+            run_pipeline,
+            write_tables_to_staging,
+        )
 
         limit = int(Variable.get("POKOPIA_SCRAPE_LIMIT", default_var="0"))
-        tables = run_pipeline(limit=limit, items_csv=None)
-        counts = refresh_pokopia_tables(tables, postgres_conn_id="DATA-DB")
+        items_only = Variable.get("POKOPIA_ITEMS_ONLY", default_var="false").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if items_only:
+            tables = build_item_tables_from_csv(resolve_items_csv())
+        else:
+            tables = run_pipeline(limit=limit, items_csv=None)
+
+        counts = refresh_pokopia_tables(
+            tables,
+            postgres_conn_id="DATA-DB",
+            items_only=items_only,
+        )
 
         paths: list[str] = []
         if Variable.get("POKOPIA_WRITE_STAGING", default_var="false").lower() in (
