@@ -32,3 +32,7 @@ data/mart/
 # OS
 .DS_Store
 Thumbs.db
+
+/pokemon/*
+/streamlit/data/pokopia_item_images/
+/logs/pokopia_item_images_errors.log
