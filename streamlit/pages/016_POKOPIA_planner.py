@@ -4,10 +4,12 @@ Pokopia : planificateur (lecture PostgreSQL schéma pokopia).
 
 from __future__ import annotations
 
+import base64
 import os
 import re
 from collections import defaultdict
 from html import escape
+from pathlib import Path
 
 import psycopg2
 import streamlit as st
@@ -66,6 +68,25 @@ _MATRIX_ITEM_LABELS: dict[str, str] = {
     "decoration": "Déco",
     "tot": "Jouet",
 }
+_ITEM_IMAGE_DIR = Path(
+    os.getenv(
+        "POKOPIA_ITEM_IMAGES_DIR",
+        str(Path(__file__).resolve().parents[1] / "data" / "pokopia_item_images"),
+    )
+)
+
+
+def _normalize_item_filename(item_name: str) -> str:
+    return item_name.strip().lower().replace(" ", "") + ".png"
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _item_image_data_uri(item_name: str, image_dir: str) -> str | None:
+    path = Path(image_dir) / _normalize_item_filename(item_name)
+    if not path.is_file():
+        return None
+    payload = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{payload}"
 
 
 def _favorite_to_gift_theme(fav: str, themes: tuple[str, ...]) -> str | None:
@@ -248,6 +269,8 @@ def _favorite_cell_html(
     *,
     triplets: dict[str, dict[str, str]],
     themes: tuple[str, ...],
+    duplicate_items: set[str],
+    image_dir: str,
 ) -> str:
     if not fav:
         return "—"
@@ -255,10 +278,24 @@ def _favorite_cell_html(
     trip = triplets.get(theme) if theme else None
     lines = [f'<div class="fav-title">{escape(fav)}</div>']
     if theme and trip is not None:
+        fav_lines: list[str] = []
+        for cat in sorted(_CATEGORY_ORDER):
+            item_name = trip.get(cat, "—")
+            item_is_dup = item_name != "—" and item_name in duplicate_items
+            item_class = "dup" if item_is_dup else ""
+            img = ""
+            if item_name != "—":
+                img_uri = _item_image_data_uri(item_name, image_dir)
+                if img_uri:
+                    img = (
+                        f'<img class="item-thumb" src="{img_uri}" alt="{escape(item_name)}" />'
+                    )
+            fav_lines.append(
+                f'<div class="fav-line {item_class}"><span class="k">'
+                f"{escape(_MATRIX_ITEM_LABELS.get(cat, cat))}</span> — {escape(item_name)}{img}</div>"
+            )
         inner = "".join(
-            f'<div class="fav-line"><span class="k">{escape(_MATRIX_ITEM_LABELS.get(cat, cat))}</span>'
-            f" — {escape(trip.get(cat, '—'))}</div>"
-            for cat in _CATEGORY_ORDER
+            fav_lines
         )
         lines.append(f'<div class="fav-grid">{inner}</div>')
     elif theme:
@@ -278,6 +315,8 @@ def _favorites_matrix_html(
     *,
     triplets: dict[str, dict[str, str]],
     themes: tuple[str, ...],
+    duplicate_items: set[str],
+    image_dir: str,
 ) -> str:
     if not rows:
         return "<p style='color:#aab;'>Sélectionne au moins un Pokémon.</p>"
@@ -292,7 +331,17 @@ def _favorites_matrix_html(
         for r in rows:
             favs = r.get("favorites") or []
             fav = favs[i] if i < len(favs) else ""
-            inner = _favorite_cell_html(fav, triplets=triplets, themes=themes) if fav else "—"
+            inner = (
+                _favorite_cell_html(
+                    fav,
+                    triplets=triplets,
+                    themes=themes,
+                    duplicate_items=duplicate_items,
+                    image_dir=image_dir,
+                )
+                if fav
+                else "—"
+            )
             tds.append(f"<td>{inner}</td>")
         body_rows.append("<tr>" + "".join(tds) + "</tr>")
     return f"""
@@ -397,7 +446,24 @@ def _matrix_shell(inner: str) -> str:
     .fav-title {{ font-weight:700; color:#fff; margin-bottom:6px; font-size:0.9rem; }}
     .fav-grid {{ display:flex; flex-direction:column; gap:4px; }}
     .fav-line {{ font-size:0.82rem; color:#dfe7ff; line-height:1.35; }}
+    .fav-line.dup {{
+      background: rgba(255, 216, 107, .18);
+      border: 1px solid rgba(255, 216, 107, .45);
+      border-radius: 8px;
+      padding: 3px 6px;
+    }}
     .fav-line .k {{ color:#9fb4ff; font-weight:600; min-width:3.2rem; display:inline-block; }}
+    .item-thumb {{
+      width: 26px;
+      height: 26px;
+      object-fit: contain;
+      margin-left: 6px;
+      vertical-align: middle;
+      border-radius: 4px;
+      border: 1px solid rgba(255,255,255,.22);
+      background: rgba(255,255,255,.08);
+      padding: 1px;
+    }}
     .fav-muted {{ font-size:0.78rem; color:#8a9bc4; margin-top:4px; line-height:1.3; }}
     table.matrix th {{
       background: linear-gradient(180deg, rgba(255,79,216,.18), rgba(100,249,255,.08));
@@ -463,7 +529,11 @@ selected_meta = [r for r in base_rows if r.get("nom") in selected_labels]
 if selected_meta:
     fav_map = _load_favorites_map(tuple(r["nom"] for r in selected_meta))
     selected = [
-        {"nom": r["nom"], "num": r["num"], "favorites": fav_map.get(r["nom"], [])}
+        {
+            "nom": r["nom"],
+            "num": r["num"],
+            "favorites": sorted(fav_map.get(r["nom"], []), key=str.lower),
+        }
         for r in selected_meta
     ]
 else:
@@ -478,8 +548,25 @@ except Exception as e:
     st.warning(f"Lecture thèmes / items pour le tableau : {e}")
 
 if selected:
+    item_counts: dict[str, int] = defaultdict(int)
+    for row in selected:
+        for fav in row.get("favorites") or []:
+            theme = _favorite_to_gift_theme(fav, gift_themes)
+            trip = item_triplets.get(theme) if theme else None
+            if not trip:
+                continue
+            for cat in sorted(_CATEGORY_ORDER):
+                name = trip.get(cat)
+                if name and name != "—":
+                    item_counts[name] += 1
+    duplicate_items = {name for name, count in item_counts.items() if count > 1}
+
     inner = _favorites_matrix_html(
-        selected, triplets=item_triplets, themes=gift_themes
+        selected,
+        triplets=item_triplets,
+        themes=gift_themes,
+        duplicate_items=duplicate_items,
+        image_dir=str(_ITEM_IMAGE_DIR),
     )
     max_favs = max(len(r.get("favorites") or []) for r in selected)
     h = min(980, 160 + max_favs * 108)
