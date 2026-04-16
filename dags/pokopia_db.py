@@ -106,14 +106,27 @@ RESTART IDENTITY CASCADE
 """
 
 
+TRUNCATE_ITEM_TABLES_SQL = f"""
+TRUNCATE TABLE
+    {SCHEMA}.item,
+    {SCHEMA}.type,
+    {SCHEMA}.category,
+    {SCHEMA}.gift_theme
+RESTART IDENTITY CASCADE
+"""
+
+
 def refresh_pokopia_tables(
     tables: dict[str, list[dict[str, Any]]],
     *,
     postgres_conn_id: str = "DATA-DB",
+    items_only: bool = False,
 ) -> dict[str, int]:
     """
     Vide puis recharge le schéma ``pokopia`` (**TRUNCATE** des tables, pas DROP SCHEMA)
     pour que les **GRANT** définis à la main en base soient conservés entre deux runs du DAG.
+    Avec ``items_only=True``, seules les tables issues de ``items.csv`` sont
+    vidées/rechargées (``gift_theme``, ``category``, ``type``, ``item``).
     """
     try:
         from airflow.providers.postgres.hooks.postgres import PostgresHook
@@ -126,7 +139,7 @@ def refresh_pokopia_tables(
     try:
         ensure_tables(conn)
         with conn.cursor() as cur:
-            cur.execute(TRUNCATE_TABLES_SQL)
+            cur.execute(TRUNCATE_ITEM_TABLES_SQL if items_only else TRUNCATE_TABLES_SQL)
 
             def ins(sql: str, rows: list[tuple]) -> int:
                 if not rows:
@@ -134,20 +147,21 @@ def refresh_pokopia_tables(
                 execute_values(cur, sql, rows, page_size=500)
                 return len(rows)
 
-            ih = [(r["valeur"],) for r in tables.get("ideal_habitat", [])]
-            counts["ideal_habitat"] = ins(
-                f"INSERT INTO {SCHEMA}.ideal_habitat (valeur) VALUES %s", ih
-            )
+            if not items_only:
+                ih = [(r["valeur"],) for r in tables.get("ideal_habitat", [])]
+                counts["ideal_habitat"] = ins(
+                    f"INSERT INTO {SCHEMA}.ideal_habitat (valeur) VALUES %s", ih
+                )
 
-            sp = [(r["valeur"],) for r in tables.get("specialty", [])]
-            counts["specialty"] = ins(
-                f"INSERT INTO {SCHEMA}.specialty (valeur) VALUES %s", sp
-            )
+                sp = [(r["valeur"],) for r in tables.get("specialty", [])]
+                counts["specialty"] = ins(
+                    f"INSERT INTO {SCHEMA}.specialty (valeur) VALUES %s", sp
+                )
 
-            fav = [(r["valeur"],) for r in tables.get("favorite", [])]
-            counts["favorite"] = ins(
-                f"INSERT INTO {SCHEMA}.favorite (valeur) VALUES %s", fav
-            )
+                fav = [(r["valeur"],) for r in tables.get("favorite", [])]
+                counts["favorite"] = ins(
+                    f"INSERT INTO {SCHEMA}.favorite (valeur) VALUES %s", fav
+                )
 
             cat = [(r["valeur"],) for r in tables.get("category", [])]
             counts["category"] = ins(
@@ -166,32 +180,33 @@ def refresh_pokopia_tables(
                 f"INSERT INTO {SCHEMA}.gift_theme (valeur) VALUES %s", gt
             )
 
-            pk = [
-                (r["nom"], r["num"], r.get("ideal_habitat_valeur"))
-                for r in tables.get("pokemon", [])
-            ]
-            counts["pokemon"] = ins(
-                f"INSERT INTO {SCHEMA}.pokemon (nom, num, ideal_habitat_valeur) VALUES %s",
-                pk,
-            )
+            if not items_only:
+                pk = [
+                    (r["nom"], r["num"], r.get("ideal_habitat_valeur"))
+                    for r in tables.get("pokemon", [])
+                ]
+                counts["pokemon"] = ins(
+                    f"INSERT INTO {SCHEMA}.pokemon (nom, num, ideal_habitat_valeur) VALUES %s",
+                    pk,
+                )
 
-            ps = [
-                (r["pokemon_nom"], r["specialty_valeur"], r["ordre"])
-                for r in tables.get("pokemon_specialty", [])
-            ]
-            counts["pokemon_specialty"] = ins(
-                f"INSERT INTO {SCHEMA}.pokemon_specialty (pokemon_nom, specialty_valeur, ordre) VALUES %s",
-                ps,
-            )
+                ps = [
+                    (r["pokemon_nom"], r["specialty_valeur"], r["ordre"])
+                    for r in tables.get("pokemon_specialty", [])
+                ]
+                counts["pokemon_specialty"] = ins(
+                    f"INSERT INTO {SCHEMA}.pokemon_specialty (pokemon_nom, specialty_valeur, ordre) VALUES %s",
+                    ps,
+                )
 
-            pf = [
-                (r["pokemon_nom"], r["favorite_valeur"], r["ordre"])
-                for r in tables.get("pokemon_favorite", [])
-            ]
-            counts["pokemon_favorite"] = ins(
-                f"INSERT INTO {SCHEMA}.pokemon_favorite (pokemon_nom, favorite_valeur, ordre) VALUES %s",
-                pf,
-            )
+                pf = [
+                    (r["pokemon_nom"], r["favorite_valeur"], r["ordre"])
+                    for r in tables.get("pokemon_favorite", [])
+                ]
+                counts["pokemon_favorite"] = ins(
+                    f"INSERT INTO {SCHEMA}.pokemon_favorite (pokemon_nom, favorite_valeur, ordre) VALUES %s",
+                    pf,
+                )
 
             it = [
                 (r["gift_theme_valeur"], r["type_valeur"], r["name"])
