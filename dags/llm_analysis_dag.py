@@ -12,14 +12,50 @@ from pendulum import datetime
 
 
 GROQ_CHAT_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
+# IDs alignés sur la doc Groq (chat). Variable Airflow `groq_models` (CSV) pour surcharger.
+# Hors scope ici: whisper-*, canopylabs/*, *prompt-guard* (audio / TTS / modération).
 MODELS_LIST = [
-    "llama-3.3-70b-versatile",
-    "gpt-oss-120b",
-    "qwen-3-32b",
-    "llama-4-scout-17b-instruct",
     "llama-3.1-8b-instant",
-    "gemma-2-9b-it",
+    "llama-3.3-70b-versatile",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "qwen/qwen3-32b",
 ]
+
+
+def _resolve_target_models() -> list[str]:
+    raw = Variable.get("groq_models", default="")
+    if not raw.strip():
+        return MODELS_LIST
+    return [m.strip() for m in raw.split(",") if m.strip()]
+
+
+def _truthy_airflow_var(raw: str | None) -> bool:
+    if raw is None:
+        return False
+    return raw.strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _request_delay_seconds() -> float:
+    raw = Variable.get("groq_request_sleep_seconds", default="0.5").strip()
+    try:
+        value = float(raw.replace(",", "."))
+    except ValueError:
+        return 0.5
+    return max(0.0, min(value, 120.0))
+
+
+def _fetch_available_groq_models(api_key: str) -> set[str]:
+    response = requests.get(
+        GROQ_MODELS_URL,
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    body = response.json()
+    return {str(item.get("id")) for item in (body.get("data") or []) if item.get("id")}
 
 
 def _build_prompt(review_text: str) -> str:
@@ -100,6 +136,19 @@ def _call_groq_json(
     schedule=None,
     catchup=False,
     tags=["llm", "grok", "analysis", "postgres"],
+    doc_md="""
+    ## Reprise / tokens (backfill)
+
+    - **Sans option**: chaque run refait tous les appels Groq (upsert en base, pas de doublon de lignes).
+    - **Variable `groq_analysis_skip_existing`** (defaut `true`): si une ligne existe deja pour
+      `analysis_id` (modele + review), **aucun appel API** — utile apres quota/token epuise pour
+      ne traiter que les combinaisons manquantes.
+    - Pour **forcer un recalcul complet**: definir `groq_analysis_skip_existing` a `false`.
+
+    Autres variables: `groq_api_key`, `groq_models` (CSV), `grok_api_key` (fallback cle).
+    - **`groq_request_sleep_seconds`**: pause en secondes entre deux appels Groq (defaut `0.5`, max `120`).
+      Mettre `0` pour desactiver. Les lignes skippees (`groq_analysis_skip_existing`) ne declenchent pas d'appel ni de sleep.
+    """,
 )
 def llm_analysis_dag():
     @task()
@@ -113,6 +162,31 @@ def llm_analysis_dag():
                 "Missing Airflow variable for Groq API key. "
                 "Set 'groq_api_key' (preferred) or 'grok_api_key'."
             )
+        target_models = _resolve_target_models()
+        try:
+            available_models = _fetch_available_groq_models(groq_api_key)
+            active_models = [m for m in target_models if m in available_models]
+            skipped_models = [m for m in target_models if m not in available_models]
+            if skipped_models:
+                print(
+                    "[WARN] Skipping unavailable Groq models: "
+                    + ", ".join(skipped_models)
+                )
+        except Exception as error:
+            print(
+                f"[WARN] Could not fetch Groq models list, fallback to configured list. Error={error}"
+            )
+            active_models = target_models
+
+        if not active_models:
+            raise ValueError(
+                "No active Groq model available. Configure Airflow variable 'groq_models' "
+                "with valid model IDs for your account."
+            )
+        skip_existing = _truthy_airflow_var(
+            Variable.get("groq_analysis_skip_existing", default="true")
+        )
+        request_delay_s = _request_delay_seconds()
         hook = PostgresHook(postgres_conn_id="DATA-DB")
         conn = hook.get_conn()
 
@@ -203,15 +277,39 @@ def llm_analysis_dag():
                 cursor.execute(select_reviews_sql)
                 review_rows = cursor.fetchall()
 
+        existing_analysis_ids: set[str] = set()
+        if skip_existing and review_rows:
+            review_ids = [row[0] for row in review_rows]
+            with conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT analysis_id
+                        FROM public.review_llm_analysis
+                        WHERE review_id = ANY(%s);
+                        """,
+                        (review_ids,),
+                    )
+                    existing_analysis_ids = {row[0] for row in cursor.fetchall() if row[0]}
+            print(
+                f"[INFO] groq_analysis_skip_existing={skip_existing}: "
+                f"{len(existing_analysis_ids)} analyses deja en base (candidates skip)."
+            )
+        print(f"[INFO] groq_request_sleep_seconds={request_delay_s}s entre chaque appel Groq.")
+
         analyses_done = 0
+        analyses_skipped = 0
         analysis_errors = 0
         keywords_written = 0
 
         with conn:
             with conn.cursor() as cursor:
                 for review_id, review_text in review_rows:
-                    for model_name in MODELS_LIST:
+                    for model_name in active_models:
                         analysis_id = f"{model_name}__{review_id}"
+                        if skip_existing and analysis_id in existing_analysis_ids:
+                            analyses_skipped += 1
+                            continue
                         try:
                             parsed = _call_groq_json(
                                 api_key=groq_api_key,
@@ -247,18 +345,21 @@ def llm_analysis_dag():
                                 )
                                 keywords_written += 1
                             analyses_done += 1
+                            existing_analysis_ids.add(analysis_id)
                         except Exception as error:
                             analysis_errors += 1
                             print(
                                 f"[WARN] Analysis failed - review_id={review_id}, "
                                 f"model={model_name}, error={error}"
                             )
-                        time.sleep(0.2)
+                        if request_delay_s > 0:
+                            time.sleep(request_delay_s)
 
         return {
             "reviews_loaded": len(review_rows),
-            "models_count": len(MODELS_LIST),
+            "models_count": len(active_models),
             "analyses_done": analyses_done,
+            "analyses_skipped": analyses_skipped,
             "analysis_errors": analysis_errors,
             "keywords_written": keywords_written,
         }
