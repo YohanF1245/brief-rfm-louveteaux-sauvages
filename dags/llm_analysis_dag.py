@@ -6,8 +6,7 @@ import time
 from typing import Any
 
 import requests
-from airflow.decorators import dag, task
-from airflow.models import Variable
+from airflow.sdk import Variable, dag, task
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from pendulum import datetime
 
@@ -105,7 +104,15 @@ def _call_groq_json(
 def llm_analysis_dag():
     @task()
     def run_analysis_and_load() -> dict[str, int]:
-        grok_api_key = Variable.get("grok_api_key")
+        groq_api_key = Variable.get("groq_api_key", default=None) or Variable.get(
+            "grok_api_key",
+            default=None,
+        )
+        if not groq_api_key:
+            raise ValueError(
+                "Missing Airflow variable for Groq API key. "
+                "Set 'groq_api_key' (preferred) or 'grok_api_key'."
+            )
         hook = PostgresHook(postgres_conn_id="DATA-DB")
         conn = hook.get_conn()
 
@@ -207,7 +214,7 @@ def llm_analysis_dag():
                         analysis_id = f"{model_name}__{review_id}"
                         try:
                             parsed = _call_groq_json(
-                                api_key=grok_api_key,
+                                api_key=groq_api_key,
                                 model_name=model_name,
                                 review_text=review_text,
                             )
