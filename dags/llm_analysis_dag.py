@@ -148,6 +148,11 @@ def _call_groq_json(
     Autres variables: `groq_api_key`, `groq_models` (CSV), `grok_api_key` (fallback cle).
     - **`groq_request_sleep_seconds`**: pause en secondes entre deux appels Groq (defaut `0.5`, max `120`).
       Mettre `0` pour desactiver. Les lignes skippees (`groq_analysis_skip_existing`) ne declenchent pas d'appel ni de sleep.
+
+    ## Persistance (v3)
+
+    - **Commit PostgreSQL apres chaque paire (review_id, modele)** reussie : l'appel Groq n'est pas dans une transaction ouverte.
+    - En cas de crash du worker, les analyses deja validees restent en base.
     """,
 )
 def llm_analysis_dag():
@@ -188,7 +193,6 @@ def llm_analysis_dag():
         )
         request_delay_s = _request_delay_seconds()
         hook = PostgresHook(postgres_conn_id="DATA-DB")
-        conn = hook.get_conn()
 
         create_analysis_table_sql = """
         CREATE TABLE IF NOT EXISTS public.review_llm_analysis (
@@ -270,18 +274,26 @@ def llm_analysis_dag():
         ) VALUES (%s, %s, %s, %s);
         """
 
-        with conn:
-            with conn.cursor() as cursor:
+        conn_setup = hook.get_conn()
+        try:
+            with conn_setup.cursor() as cursor:
                 cursor.execute(create_analysis_table_sql)
                 cursor.execute(create_keywords_table_sql)
                 cursor.execute(select_reviews_sql)
                 review_rows = cursor.fetchall()
+            conn_setup.commit()
+        except Exception:
+            conn_setup.rollback()
+            raise
+        finally:
+            conn_setup.close()
 
         existing_analysis_ids: set[str] = set()
         if skip_existing and review_rows:
             review_ids = [row[0] for row in review_rows]
-            with conn:
-                with conn.cursor() as cursor:
+            conn_ids = hook.get_conn()
+            try:
+                with conn_ids.cursor() as cursor:
                     cursor.execute(
                         """
                         SELECT analysis_id
@@ -291,69 +303,107 @@ def llm_analysis_dag():
                         (review_ids,),
                     )
                     existing_analysis_ids = {row[0] for row in cursor.fetchall() if row[0]}
+                conn_ids.commit()
+            except Exception:
+                conn_ids.rollback()
+                raise
+            finally:
+                conn_ids.close()
             print(
                 f"[INFO] groq_analysis_skip_existing={skip_existing}: "
                 f"{len(existing_analysis_ids)} analyses deja en base (candidates skip)."
             )
         print(f"[INFO] groq_request_sleep_seconds={request_delay_s}s entre chaque appel Groq.")
+        print(
+            f"[INFO] A traiter: {len(review_rows)} reviews x {len(active_models)} modeles "
+            f"(max {len(review_rows) * len(active_models)} appels Groq)."
+        )
 
         analyses_done = 0
         analyses_skipped = 0
         analysis_errors = 0
         keywords_written = 0
 
-        with conn:
-            with conn.cursor() as cursor:
-                for review_id, review_text in review_rows:
-                    for model_name in active_models:
-                        analysis_id = f"{model_name}__{review_id}"
-                        if skip_existing and analysis_id in existing_analysis_ids:
-                            analyses_skipped += 1
-                            continue
-                        try:
-                            parsed = _call_groq_json(
-                                api_key=groq_api_key,
-                                model_name=model_name,
-                                review_text=review_text,
-                            )
-                            flags = parsed.get("analysis_flags") or {}
+        for review_id, review_text in review_rows:
+            for model_name in active_models:
+                analysis_id = f"{model_name}__{review_id}"
+                if skip_existing and analysis_id in existing_analysis_ids:
+                    analyses_skipped += 1
+                    continue
+                print(
+                    f"[INFO] Groq START review_id={review_id} model={model_name} "
+                    f"(text_len={len(review_text or '')})"
+                )
+                try:
+                    parsed = _call_groq_json(
+                        api_key=groq_api_key,
+                        model_name=model_name,
+                        review_text=review_text,
+                    )
+                except Exception as error:
+                    analysis_errors += 1
+                    print(
+                        f"[WARN] Groq/API failed - review_id={review_id}, "
+                        f"model={model_name}, error={error}"
+                    )
+                    if request_delay_s > 0:
+                        time.sleep(request_delay_s)
+                    continue
+
+                flags = parsed.get("analysis_flags") or {}
+                keywords_batch = parsed.get("keywords") or []
+                conn_write = hook.get_conn()
+                try:
+                    with conn_write.cursor() as cursor:
+                        cursor.execute(
+                            upsert_analysis_sql,
+                            (
+                                analysis_id,
+                                review_id,
+                                model_name,
+                                parsed.get("sentiment"),
+                                parsed.get("confidence"),
+                                parsed.get("criticite"),
+                                parsed.get("serieux"),
+                                flags.get("sarcasm_detected"),
+                                flags.get("noise_level"),
+                                flags.get("is_constructive"),
+                            ),
+                        )
+                        cursor.execute(delete_keywords_sql, (analysis_id,))
+                        for kw in keywords_batch:
                             cursor.execute(
-                                upsert_analysis_sql,
+                                insert_keyword_sql,
                                 (
                                     analysis_id,
-                                    review_id,
-                                    model_name,
-                                    parsed.get("sentiment"),
-                                    parsed.get("confidence"),
-                                    parsed.get("criticite"),
-                                    parsed.get("serieux"),
-                                    flags.get("sarcasm_detected"),
-                                    flags.get("noise_level"),
-                                    flags.get("is_constructive"),
+                                    kw.get("category"),
+                                    kw.get("keyword"),
+                                    kw.get("polarity"),
                                 ),
                             )
-                            cursor.execute(delete_keywords_sql, (analysis_id,))
-                            for kw in (parsed.get("keywords") or []):
-                                cursor.execute(
-                                    insert_keyword_sql,
-                                    (
-                                        analysis_id,
-                                        kw.get("category"),
-                                        kw.get("keyword"),
-                                        kw.get("polarity"),
-                                    ),
-                                )
-                                keywords_written += 1
-                            analyses_done += 1
-                            existing_analysis_ids.add(analysis_id)
-                        except Exception as error:
-                            analysis_errors += 1
-                            print(
-                                f"[WARN] Analysis failed - review_id={review_id}, "
-                                f"model={model_name}, error={error}"
-                            )
-                        if request_delay_s > 0:
-                            time.sleep(request_delay_s)
+                    conn_write.commit()
+                except Exception as error:
+                    conn_write.rollback()
+                    analysis_errors += 1
+                    print(
+                        f"[WARN] PostgreSQL write failed - review_id={review_id}, "
+                        f"model={model_name}, error={error}"
+                    )
+                    if request_delay_s > 0:
+                        time.sleep(request_delay_s)
+                    continue
+                finally:
+                    conn_write.close()
+
+                keywords_written += len(keywords_batch)
+                analyses_done += 1
+                existing_analysis_ids.add(analysis_id)
+                print(
+                    f"[INFO] COMMIT OK review_id={review_id} model={model_name} "
+                    f"keywords={len(keywords_batch)} sentiment={parsed.get('sentiment')!r}"
+                )
+                if request_delay_s > 0:
+                    time.sleep(request_delay_s)
 
         return {
             "reviews_loaded": len(review_rows),
