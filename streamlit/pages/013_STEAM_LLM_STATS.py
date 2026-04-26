@@ -13,7 +13,7 @@ def _cfg(name: str, default: str = "") -> str:
 
 
 @st.cache_data(ttl=60)
-def load_stats_data() -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_stats_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     connection = psycopg2.connect(
         host=_cfg("APP_DB_HOST", "postgres-db"),
         port=int(_cfg("APP_DB_PORT", "5432")),
@@ -53,9 +53,26 @@ def load_stats_data() -> tuple[pd.DataFrame, pd.DataFrame]:
             """,
             connection,
         )
+        try:
+            errors_df = pd.read_sql_query(
+                """
+                SELECT
+                    review_id,
+                    model_used,
+                    code_error,
+                    error_text,
+                    created_at
+                FROM public.review_llm_analysis_errors;
+                """,
+                connection,
+            )
+        except Exception:
+            errors_df = pd.DataFrame(
+                columns=["review_id", "model_used", "code_error", "error_text", "created_at"]
+            )
     finally:
         connection.close()
-    return analyses_df, reviews_df
+    return analyses_df, reviews_df, errors_df
 
 
 st.set_page_config(page_title="Steam LLM Stats", layout="wide")
@@ -66,7 +83,7 @@ if st.button("Actualiser les donnees"):
     load_stats_data.clear()
 
 try:
-    analyses_df, reviews_df = load_stats_data()
+    analyses_df, reviews_df, errors_df = load_stats_data()
 except Exception as error:
     st.error(f"Erreur de connexion/lecture PostgreSQL: {error}")
     st.stop()
@@ -102,6 +119,32 @@ review_coverage["analyses_count"] = review_coverage["analyses_count"].fillna(0).
 review_coverage["models_missing"] = review_coverage["models_present"].apply(
     lambda present: [m for m in models if m not in present]
 )
+if errors_df.empty:
+    errors_by_review = pd.DataFrame(
+        columns=["review_id", "codes_erreur", "errors_count", "last_error_at", "dernier_error_text"]
+    )
+else:
+    errors_df["code_error"] = errors_df["code_error"].astype("Int64")
+    errors_by_review = (
+        errors_df.sort_values("created_at")
+        .groupby("review_id", as_index=False)
+        .agg(
+            codes_erreur=("code_error", lambda s: sorted({int(v) for v in s.dropna()})),
+            errors_count=("review_id", "count"),
+            last_error_at=("created_at", "max"),
+            dernier_error_text=("error_text", "last"),
+        )
+    )
+    errors_by_review["codes_erreur_txt"] = errors_by_review["codes_erreur"].apply(
+        lambda values: ", ".join(str(v) for v in values)
+    )
+review_coverage = review_coverage.merge(errors_by_review, on="review_id", how="left")
+review_coverage["codes_erreur"] = review_coverage["codes_erreur"].apply(
+    lambda values: values if isinstance(values, list) else []
+)
+review_coverage["codes_erreur_txt"] = review_coverage.get("codes_erreur_txt", pd.Series(index=review_coverage.index)).fillna("")
+review_coverage["errors_count"] = review_coverage.get("errors_count", pd.Series(index=review_coverage.index)).fillna(0).astype(int)
+review_coverage["dernier_error_text"] = review_coverage.get("dernier_error_text", pd.Series(index=review_coverage.index)).fillna("")
 
 if show_complete_only:
     complete_review_ids = review_coverage[
@@ -238,6 +281,20 @@ incomplete_reviews["modeles_manquants"] = incomplete_reviews["models_missing"].a
     lambda values: ", ".join(values)
 )
 incomplete_reviews["review_preview"] = incomplete_reviews["review_text"].fillna("").str.slice(0, 200)
+error_code_options = sorted(
+    {code for codes in incomplete_reviews["codes_erreur"] for code in codes}
+)
+selected_error_codes = st.multiselect(
+    "Filtrer les reviews incompletes par code d'erreur",
+    options=error_code_options,
+    default=[],
+)
+if selected_error_codes:
+    incomplete_reviews = incomplete_reviews[
+        incomplete_reviews["codes_erreur"].apply(
+            lambda values: any(code in values for code in selected_error_codes)
+        )
+    ].copy()
 
 st.dataframe(
     incomplete_reviews[
@@ -245,6 +302,10 @@ st.dataframe(
             "review_id",
             "analyses_count",
             "modeles_manquants",
+            "codes_erreur_txt",
+            "errors_count",
+            "last_error_at",
+            "dernier_error_text",
             "review_preview",
             "source_polarity",
             "created_at",
