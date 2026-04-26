@@ -64,6 +64,8 @@ You are an expert system for analyzing video game reviews.
 
 Your task is to extract structured insights from a single user review. Reviews may contain slang, sarcasm, exaggeration, or low-effort text. You must interpret the REAL meaning, not just the literal wording.
 
+---
+
 OUTPUT (JSON only):
 {{
   "sentiment": "positive | negative | mixed",
@@ -84,6 +86,44 @@ OUTPUT (JSON only):
   }}
 }}
 
+---
+
+RULES:
+
+1. SENTIMENT:
+* Determine the REAL sentiment, not just literal wording.
+* Detect sarcasm and irony (e.g. "great game, crashes every 5 min" = negative).
+* Use "mixed" if both strong positive and negative points exist.
+
+2. CRITICITE (0-100):
+* Measures emotional intensity.
+* 0 = neutral/objective
+* 100 = extreme (anger, hype, outrage)
+
+3. SERIEUX (0-100):
+* Measures how trustworthy and useful the review is.
+* High = detailed, specific, constructive
+* Low = short, insults, memes, spam
+
+4. KEYWORDS:
+* Extract meaningful aspects of the game.
+* Normalize slang (e.g. "runs like shit" -> performance, negative)
+* Avoid duplicates and keep keywords concise.
+
+5. FLAGS:
+* sarcasm_detected: true if irony likely
+* noise_level: high if slang, insults, low signal
+* is_constructive: true if useful feedback
+
+6. KEYWORD NORMALIZATION LEVEL:
+* Use mid-level abstraction.
+* Avoid overly generic terms (e.g. "world building", "game quality")
+* Avoid overly specific phrases copied verbatim.
+* Prefer standardized but meaningful expressions (e.g. "immersive world", "strong character writing")
+
+---
+
+Be strict, consistent, and avoid hallucinations.
 Return only valid JSON.
 
 INPUT:
