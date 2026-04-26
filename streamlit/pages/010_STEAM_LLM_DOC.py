@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 import streamlit as st
 
@@ -207,7 +208,11 @@ with st.expander("Prompt utilisé pour l'analyse des reviews"):
 
 
 header_anchor("Schema Entité - Relationnel", anchor_id="schema-entite-relationnel")
-st.image("streamlit/data/llm-analysis-steam-images/mcd.jpg")
+_img_path = Path(__file__).resolve().parents[1] / "data" / "llm-analysis-steam-images" / "mcd.jpg"
+if _img_path.exists():
+    st.image(str(_img_path))
+else:
+    st.warning(f"Image introuvable: {_img_path}")
 
 header_anchor("Description du DAG steam_reviews_sentiment_dag", anchor_id="description-du-dag-steam-reviews")
 
