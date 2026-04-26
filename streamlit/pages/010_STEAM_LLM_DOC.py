@@ -311,6 +311,13 @@ Ces éléments peuvent entraîner des erreurs d’interprétation, notamment sur
 
 Afin d’améliorer la précision et la robustesse de l’analyse, plusieurs axes peuvent être envisagés.
 
+#### Fiabilisation des appels LLM
+
+Mettre en place une gestion d'erreurs dediee pour renforcer la robustesse du pipeline:
+- reprise automatique des appels en cas de `rate_limit_exceeded` (HTTP 429) avec temporisation progressive
+- gestion explicite des reponses JSON invalides (`json_validate_failed`) avec retries cibles et journalisation des cas rejetes
+
+
 #### Enrichissement des données
 
 L’intégration de métadonnées supplémentaires permettrait d’apporter un contexte précieux, notamment :
