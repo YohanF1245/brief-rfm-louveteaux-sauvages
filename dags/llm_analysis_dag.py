@@ -25,6 +25,13 @@ MODELS_LIST = [
 ]
 
 
+class GroqRequestError(Exception):
+    def __init__(self, status_code: int | None, error_text: str):
+        self.status_code = status_code
+        self.error_text = (error_text or "").strip()
+        super().__init__(f"Groq request failed status={status_code}")
+
+
 def _resolve_target_models() -> list[str]:
     raw = Variable.get("groq_models", default="")
     if not raw.strip():
@@ -163,7 +170,14 @@ def _call_groq_json(
         json=payload,
         timeout=120,
     )
-    response.raise_for_status()
+    if response.status_code != 200:
+        error_text = response.text
+        try:
+            parsed_error = response.json()
+            error_text = json.dumps(parsed_error, ensure_ascii=False)
+        except Exception:
+            pass
+        raise GroqRequestError(status_code=response.status_code, error_text=error_text)
 
     body = response.json()
     content = (((body.get("choices") or [{}])[0].get("message") or {}).get("content")) or ""
@@ -268,6 +282,16 @@ def llm_analysis_dag():
                 ON DELETE CASCADE
         );
         """
+        create_errors_table_sql = """
+        CREATE TABLE IF NOT EXISTS public.review_llm_analysis_errors (
+            id BIGSERIAL PRIMARY KEY,
+            review_id TEXT NOT NULL,
+            model_used VARCHAR(120) NOT NULL,
+            code_error INTEGER,
+            error_text TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """
         select_reviews_sql = """
         SELECT review_id, review_text
         FROM public.steam_reviews_sentiment
@@ -313,12 +337,21 @@ def llm_analysis_dag():
             polarity
         ) VALUES (%s, %s, %s, %s);
         """
+        insert_error_sql = """
+        INSERT INTO public.review_llm_analysis_errors (
+            review_id,
+            model_used,
+            code_error,
+            error_text
+        ) VALUES (%s, %s, %s, %s);
+        """
 
         conn_setup = hook.get_conn()
         try:
             with conn_setup.cursor() as cursor:
                 cursor.execute(create_analysis_table_sql)
                 cursor.execute(create_keywords_table_sql)
+                cursor.execute(create_errors_table_sql)
                 cursor.execute(select_reviews_sql)
                 review_rows = cursor.fetchall()
             conn_setup.commit()
@@ -382,6 +415,32 @@ def llm_analysis_dag():
                     )
                 except Exception as error:
                     analysis_errors += 1
+                    status_code = None
+                    error_text = str(error)
+                    if isinstance(error, GroqRequestError):
+                        status_code = error.status_code
+                        error_text = error.error_text
+                    conn_error = hook.get_conn()
+                    try:
+                        with conn_error.cursor() as cursor:
+                            cursor.execute(
+                                insert_error_sql,
+                                (
+                                    review_id,
+                                    model_name,
+                                    status_code,
+                                    error_text,
+                                ),
+                            )
+                        conn_error.commit()
+                    except Exception as log_error:
+                        conn_error.rollback()
+                        print(
+                            f"[WARN] Could not log Groq error - review_id={review_id}, "
+                            f"model={model_name}, error={log_error}"
+                        )
+                    finally:
+                        conn_error.close()
                     print(
                         f"[WARN] Groq/API failed - review_id={review_id}, "
                         f"model={model_name}, error={error}"
