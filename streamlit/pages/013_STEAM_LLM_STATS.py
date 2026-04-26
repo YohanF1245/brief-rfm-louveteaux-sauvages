@@ -13,7 +13,7 @@ def _cfg(name: str, default: str = "") -> str:
 
 
 @st.cache_data(ttl=60)
-def load_stats_data() -> pd.DataFrame:
+def load_stats_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     connection = psycopg2.connect(
         host=_cfg("APP_DB_HOST", "postgres-db"),
         port=int(_cfg("APP_DB_PORT", "5432")),
@@ -22,7 +22,7 @@ def load_stats_data() -> pd.DataFrame:
         dbname=_cfg("APP_DB_NAME", "rfm"),
     )
     try:
-        df = pd.read_sql_query(
+        analyses_df = pd.read_sql_query(
             """
             SELECT
                 a.analysis_id,
@@ -42,9 +42,20 @@ def load_stats_data() -> pd.DataFrame:
             """,
             connection,
         )
+        reviews_df = pd.read_sql_query(
+            """
+            SELECT
+                review_id,
+                review_text,
+                polarity AS source_polarity,
+                created_at
+            FROM public.steam_reviews_sentiment;
+            """,
+            connection,
+        )
     finally:
         connection.close()
-    return df
+    return analyses_df, reviews_df
 
 
 st.set_page_config(page_title="Steam LLM Stats", layout="wide")
@@ -55,18 +66,48 @@ if st.button("Actualiser les donnees"):
     load_stats_data.clear()
 
 try:
-    df = load_stats_data()
+    analyses_df, reviews_df = load_stats_data()
 except Exception as error:
     st.error(f"Erreur de connexion/lecture PostgreSQL: {error}")
     st.stop()
 
-if df.empty:
+if analyses_df.empty:
     st.warning("Aucune analyse disponible pour calculer les statistiques.")
     st.stop()
 
-models = sorted(df["model_used"].dropna().unique().tolist())
+REQUIRED_MODELS_COUNT = 6
+models = sorted(analyses_df["model_used"].dropna().unique().tolist())
 selected_models = st.multiselect("Modeles", options=models, default=models)
-work = df[df["model_used"].isin(selected_models)].copy() if selected_models else df.copy()
+show_complete_only = st.toggle(
+    f"Ne garder que les commentaires analyses sur {REQUIRED_MODELS_COUNT} LLM",
+    value=False,
+)
+work = (
+    analyses_df[analyses_df["model_used"].isin(selected_models)].copy()
+    if selected_models
+    else analyses_df.copy()
+)
+
+present_models = (
+    analyses_df.groupby("review_id")["model_used"]
+    .agg(lambda values: sorted({str(v) for v in values if pd.notna(v)}))
+    .reset_index(name="models_present")
+)
+present_models["analyses_count"] = present_models["models_present"].apply(len)
+review_coverage = reviews_df.merge(present_models, on="review_id", how="left")
+review_coverage["models_present"] = review_coverage["models_present"].apply(
+    lambda v: v if isinstance(v, list) else []
+)
+review_coverage["analyses_count"] = review_coverage["analyses_count"].fillna(0).astype(int)
+review_coverage["models_missing"] = review_coverage["models_present"].apply(
+    lambda present: [m for m in models if m not in present]
+)
+
+if show_complete_only:
+    complete_review_ids = review_coverage[
+        review_coverage["analyses_count"] >= REQUIRED_MODELS_COUNT
+    ]["review_id"]
+    work = work[work["review_id"].isin(complete_review_ids)].copy()
 
 if work.empty:
     st.info("Aucune ligne apres filtre.")
@@ -187,6 +228,28 @@ st.dataframe(
 st.markdown("### Variabilite inter-modeles par review (ecart-type)")
 st.dataframe(
     review_std.sort_values("confidence_std", ascending=False),
+    use_container_width=True,
+    hide_index=True,
+)
+
+st.markdown(f"### Reviews incompletes (< {REQUIRED_MODELS_COUNT} analyses)")
+incomplete_reviews = review_coverage[review_coverage["analyses_count"] < REQUIRED_MODELS_COUNT].copy()
+incomplete_reviews["modeles_manquants"] = incomplete_reviews["models_missing"].apply(
+    lambda values: ", ".join(values)
+)
+incomplete_reviews["review_preview"] = incomplete_reviews["review_text"].fillna("").str.slice(0, 200)
+
+st.dataframe(
+    incomplete_reviews[
+        [
+            "review_id",
+            "analyses_count",
+            "modeles_manquants",
+            "review_preview",
+            "source_polarity",
+            "created_at",
+        ]
+    ].sort_values(["analyses_count", "review_id"], ascending=[True, True]),
     use_container_width=True,
     hide_index=True,
 )
