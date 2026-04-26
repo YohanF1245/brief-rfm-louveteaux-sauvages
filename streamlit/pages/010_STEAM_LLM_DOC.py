@@ -235,6 +235,8 @@ Ce DAG a pour rôle d’analyser les avis préalablement stockés en base de don
 
 Pour chaque review, une requête est envoyée à l’API de Groq, en utilisant un prompt spécifique adapté à chaque modèle de langage (LLM). L’objectif est d’obtenir une réponse structurée au format JSON, contenant différents insights issus de l’analyse.
 
+En cas d'erreur, l'erreur est journalisée dans la table `review_llm_analysis_errors` pour faciliter le debuggage.
+
 **Modèles LLM utilisés :**
 - llama-3.1-8b-instant  
 - llama-3.3-70b-versatile  
@@ -246,6 +248,8 @@ Pour chaque review, une requête est envoyée à l’API de Groq, en utilisant u
 Les résultats de l’analyse sont ensuite stockés dans plusieurs tables :
 - `review_llm_analysis` : synthèse globale du sentiment de la review  
 - `review_llm_analysis_keywords` : extraction et catégorisation des mots-clés, permettant la construction d’une matrice d’analyse  
+- `review_llm_analysis_errors` : journal des erreurs d'appel LLM (review_id, modele, code HTTP, body d'erreur) pour faciliter le debuggage  
+
 """)
 header_anchor("Choix des modeles LLM et methode de comparaison", anchor_id="choix-modeles-et-comparaison")
 st.markdown("""
@@ -296,6 +300,12 @@ Ces indicateurs permettent de choisir un modèle selon le besoin :
 - **Moyenne haute + std élevé** → bon en moyenne, mais **instable**  
 - **Moyenne basse + std faible** → **constant mais peu performant**  
 - **Moyenne basse + std élevé** → modèle **peu fiable**  
+
+### Gestion des erreurs
+- un toggle pour ne garder que les reviews analysees sur les 6 modeles
+- un tableau des reviews incompletes avec les modeles manquants
+- un filtre par code d'erreur (ex: 400, 429)
+
 """)
 header_anchor("Limites connues et pistes d'amelioration", anchor_id="limites-et-ameliorations")
 st.markdown("""
