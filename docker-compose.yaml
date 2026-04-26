@@ -62,7 +62,7 @@ x-airflow-common:
     AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
     AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY}
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-airflow_jwt_secret}
     AIRFLOW__API_AUTH__JWT_ISSUER: ${AIRFLOW__API_AUTH__JWT_ISSUER:-airflow}
@@ -155,8 +155,11 @@ services:
     image: nginx:1.27-alpine
     ports:
       - "${NGINX_PUBLIC_PORT:-80}:80"
+      - "${NGINX_SSL_PUBLIC_PORT:-443}:443"
     volumes:
       - ${AIRFLOW_PROJ_DIR:-.}/nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${AIRFLOW_PROJ_DIR:-.}/nginx/certbot/www:/var/www/certbot:ro
+      - ${AIRFLOW_PROJ_DIR:-.}/nginx/certbot/conf:/etc/letsencrypt:ro
     depends_on:
       airflow-apiserver:
         condition: service_healthy
@@ -176,6 +179,12 @@ services:
     expose:
       - "8501"
     restart: always
+
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - ${AIRFLOW_PROJ_DIR:-.}/nginx/certbot/www:/var/www/certbot
+      - ${AIRFLOW_PROJ_DIR:-.}/nginx/certbot/conf:/etc/letsencrypt
 
   airflow-scheduler:
     <<: *airflow-common
