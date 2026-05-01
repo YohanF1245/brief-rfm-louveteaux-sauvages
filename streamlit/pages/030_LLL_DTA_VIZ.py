@@ -94,6 +94,16 @@ Retourne uniquement un JSON strict:
 Table autorisee: {doc["table"]}
 Colonnes autorisees: {", ".join(allowed)}
 
+Regles de correction OBLIGATOIRES:
+- retourner du SQL PostgreSQL executable immediatement
+- corriger exactement l'erreur remontee, sans en introduire une autre
+- si erreur de type "must appear in the GROUP BY clause or be used in an aggregate function":
+  - toute colonne non agregee du SELECT doit etre dans GROUP BY
+  - sinon il faut l'agreger (MAX/MIN/COUNT/SUM selon le contexte)
+  - cas typique avec CROSS JOIN d'une date globale: utiliser `MAX(alias.colonne)` dans l'expression
+- ne pas modifier les noms de colonnes autorisees
+- ne pas retourner de texte hors JSON
+
 Erreur observee:
 {error_message}
 
@@ -403,7 +413,7 @@ if submit_viz:
             result_df = pd.DataFrame()
             sql_executed = False
             last_sql_error = ""
-            for attempt in range(1, 3):
+            for attempt in range(1, 4):
                 try:
                     result_df = _run_sql_query(sql_query)
                     sql_executed = True
@@ -411,7 +421,7 @@ if submit_viz:
                 except Exception as sql_error:
                     last_sql_error = str(sql_error)
                     debug[f"sql_error_attempt_{attempt}"] = last_sql_error
-                    if attempt == 2:
+                    if attempt == 3:
                         break
                     repair_prompt = _build_sql_repair_prompt(
                         previous_sql=sql_query,
