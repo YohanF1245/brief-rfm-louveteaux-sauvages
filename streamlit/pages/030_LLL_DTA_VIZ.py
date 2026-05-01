@@ -5,9 +5,13 @@ import ast
 from pathlib import Path
 
 import altair as alt
+import matplotlib.pyplot as plt
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import psycopg2
 import requests
+import seaborn as sns
 import streamlit as st
 
 
@@ -77,18 +81,15 @@ def _build_viz_prompt(
     result_columns: str,
 ) -> str:
     return f"""Tu es un assistant Python Streamlit specialise data-viz.
-Ta mission: generer uniquement du code de visualisation Streamlit/Altair a partir
-de la question utilisateur, du SQL deja produit, et du schema de resultat.
+Genere uniquement du code de visualisation Streamlit.
 
 Contraintes:
-- Ne pas regenerer de SQL
-- Ne pas inventer de colonnes
-- Ne pas demander ni utiliser de donnees brutes
-- Utiliser uniquement les colonnes du schema fourni
-- Retourner uniquement du code Python executable
-- Libraries autorisees uniquement: streamlit, pandas, altair
-- Si tu ajoutes des imports, ils doivent etre strictement: `import streamlit as st`, `import pandas as pd`, `import altair as alt`
-- Ne retourne aucun texte hors code Python
+- pas de SQL
+- pas de texte hors code
+- pas de colonne inventee
+- libs: streamlit, pandas, altair, plotly, seaborn, matplotlib
+- choisir les imports en fonction des types de colonnes disponibles, et importer uniquement le strict necessaire
+- garder `if df.empty`
 
 SQL valide deja retenu:
 {sql_query}
@@ -96,17 +97,36 @@ SQL valide deja retenu:
 Schema du resultat SQL (colonnes + types), sans data:
 {result_columns}
 
-Contexte d'execution:
-- Un DataFrame pandas `df` existe deja (resultat de la requete SQL)
-- Stack dispo: streamlit as st, pandas as pd, altair as alt
-
 Attendu:
-1) code Streamlit/Altair
-2) titre du graphique clair
-3) gestion minimale des cas vides (`if df.empty`)
+- code Python executable uniquement
 
 Question utilisateur:
 {user_question}
+"""
+
+
+def _build_viz_repair_prompt(
+    previous_code: str,
+    error_message: str,
+    result_columns: str,
+) -> str:
+    return f"""Corrige le code Python suivant pour Streamlit.
+Le code actuel echoue a l'execution.
+
+Contraintes globales:
+- Retourner uniquement du code Python executable
+- N'utiliser que: streamlit, pandas, altair, plotly, seaborn, matplotlib
+- Ne pas inventer de colonnes
+- Utiliser uniquement ce schema de resultat: {result_columns}
+- Garder une gestion `if df.empty`
+
+Erreur observee:
+{error_message}
+
+Code a corriger:
+```python
+{previous_code}
+```
 """
 
 
@@ -128,7 +148,7 @@ def _extract_python_code(text: str) -> str:
 
 
 def _assert_safe_viz_code(viz_code: str) -> None:
-    allowed_imports = {"streamlit", "pandas", "altair"}
+    allowed_imports = {"streamlit", "pandas", "altair", "plotly", "seaborn", "matplotlib"}
     forbidden_calls = {"exec", "eval", "__import__", "open"}
 
     tree = ast.parse(viz_code)
@@ -368,13 +388,47 @@ if submit_viz:
             viz_response_raw = _call_grok(viz_prompt, model_code)
             debug["reponse_2_grok"] = viz_response_raw
             viz_code = _extract_python_code(viz_response_raw)
-            _assert_safe_viz_code(viz_code)
-            debug["code_viz"] = viz_code
+            result_schema = _schema_without_data(result_df)
 
             st.markdown("### Visualisation")
-            local_vars = {"df": result_df.copy()}
-            exec_globals = {"st": st, "pd": pd, "alt": alt}
-            exec(viz_code, exec_globals, local_vars)
+            exec_globals = {
+                "st": st,
+                "pd": pd,
+                "alt": alt,
+                "px": px,
+                "go": go,
+                "sns": sns,
+                "plt": plt,
+            }
+            viz_executed = False
+            last_viz_error = ""
+
+            for attempt in range(1, 3):
+                try:
+                    _assert_safe_viz_code(viz_code)
+                    compile(viz_code, "<viz_code>", "exec")
+                    local_vars = {"df": result_df.copy()}
+                    exec(viz_code, exec_globals, local_vars)
+                    viz_executed = True
+                    break
+                except Exception as viz_error:
+                    last_viz_error = str(viz_error)
+                    debug[f"viz_error_attempt_{attempt}"] = last_viz_error
+                    if attempt == 2:
+                        break
+                    repair_prompt = _build_viz_repair_prompt(
+                        previous_code=viz_code,
+                        error_message=last_viz_error,
+                        result_columns=result_schema,
+                    )
+                    debug["prompt_viz_repair"] = repair_prompt
+                    repair_response_raw = _call_grok(repair_prompt, model_code)
+                    debug["reponse_viz_repair"] = repair_response_raw
+                    viz_code = _extract_python_code(repair_response_raw)
+
+            debug["code_viz"] = viz_code
+            if not viz_executed:
+                raise ValueError(f"Echec execution code viz apres correction auto: {last_viz_error}")
 
             ticket_summary, ticket_text = _build_ticket_text(
                 question=question.strip(),
@@ -412,6 +466,10 @@ if submit_viz:
             st.code(debug.get("prompt_viz_enrichi", ""), language="text")
             st.markdown("#### Reponse 2 Grok")
             st.code(debug.get("reponse_2_grok", ""), language="text")
+            st.markdown("#### Prompt repair VIZ (si utilise)")
+            st.code(debug.get("prompt_viz_repair", ""), language="text")
+            st.markdown("#### Reponse repair VIZ (si utilise)")
+            st.code(debug.get("reponse_viz_repair", ""), language="text")
             st.markdown("#### Code VIZ execute")
             st.code(debug.get("code_viz", ""), language="python")
             st.markdown("#### JSON type Jira genere")
