@@ -21,6 +21,11 @@ DOC_PATH_CANDIDATES = [
     Path(__file__).resolve().parents[2] / ".local" / "llm-viz-base-columns.json",
 ]
 
+GROQ_MODEL_PRICING_PER_1M = {
+    "openai/gpt-oss-120b": {"input_usd": 0.15, "output_usd": 0.60},
+    "llama-3.3-70b-versatile": {"input_usd": 0.59, "output_usd": 0.79},
+}
+
 
 def _cfg(name: str, default: str = "") -> str:
     if name in st.secrets:
@@ -204,7 +209,28 @@ def _assert_safe_viz_code(viz_code: str) -> None:
                 raise ValueError(f"Appel interdit detecte: {node.func.id}")
 
 
-def _call_grok(prompt: str, model: str) -> str:
+def _normalize_usage(payload: dict) -> dict[str, int]:
+    usage = payload.get("usage") or {}
+    prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+    completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+    total_tokens = int(usage.get("total_tokens", prompt_tokens + completion_tokens) or 0)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def _estimate_cost_usd(model: str, usage: dict[str, int]) -> float | None:
+    pricing = GROQ_MODEL_PRICING_PER_1M.get(model)
+    if not pricing:
+        return None
+    input_cost = (usage.get("prompt_tokens", 0) / 1_000_000) * pricing["input_usd"]
+    output_cost = (usage.get("completion_tokens", 0) / 1_000_000) * pricing["output_usd"]
+    return input_cost + output_cost
+
+
+def _call_grok(prompt: str, model: str) -> tuple[str, dict[str, int]]:
     api_key = _cfg("GROQ_API_KEY", "")
     if not api_key:
         raise ValueError("GROQ_API_KEY manquante dans secrets/env.")
@@ -223,7 +249,9 @@ def _call_grok(prompt: str, model: str) -> str:
     )
     response.raise_for_status()
     payload = response.json()
-    return payload["choices"][0]["message"]["content"]
+    content = payload["choices"][0]["message"]["content"]
+    usage = _normalize_usage(payload)
+    return content, usage
 
 
 def _assert_safe_select_sql(sql_query: str, doc: dict) -> None:
@@ -395,7 +423,17 @@ if submit_viz:
             debug["prompt_sql_enrichi"] = sql_prompt
 
             model_sql = _cfg("GROQ_MODEL_SQL", "openai/gpt-oss-120b")
-            sql_response_raw = _call_grok(sql_prompt, model_sql)
+            llm_usage_rows: list[dict[str, object]] = []
+
+            sql_response_raw, sql_usage = _call_grok(sql_prompt, model_sql)
+            llm_usage_rows.append(
+                {
+                    "step": "sql_generation",
+                    "model": model_sql,
+                    **sql_usage,
+                    "estimated_cost_usd": _estimate_cost_usd(model_sql, sql_usage),
+                }
+            )
             debug["reponse_1_grok"] = sql_response_raw
 
             sql_payload = _extract_json_block(sql_response_raw)
@@ -429,7 +467,15 @@ if submit_viz:
                         doc=doc,
                     )
                     debug["prompt_sql_repair"] = repair_prompt
-                    sql_repair_raw = _call_grok(repair_prompt, model_sql)
+                    sql_repair_raw, sql_repair_usage = _call_grok(repair_prompt, model_sql)
+                    llm_usage_rows.append(
+                        {
+                            "step": f"sql_repair_attempt_{attempt}",
+                            "model": model_sql,
+                            **sql_repair_usage,
+                            "estimated_cost_usd": _estimate_cost_usd(model_sql, sql_repair_usage),
+                        }
+                    )
                     debug["reponse_sql_repair"] = sql_repair_raw
                     sql_repair_payload = _extract_json_block(sql_repair_raw)
                     sql_query = str(sql_repair_payload.get("sql", "")).strip()
@@ -454,7 +500,15 @@ if submit_viz:
             debug["prompt_viz_enrichi"] = viz_prompt
 
             model_code = _cfg("GROQ_MODEL_CODE", "llama-3.3-70b-versatile")
-            viz_response_raw = _call_grok(viz_prompt, model_code)
+            viz_response_raw, viz_usage = _call_grok(viz_prompt, model_code)
+            llm_usage_rows.append(
+                {
+                    "step": "viz_generation",
+                    "model": model_code,
+                    **viz_usage,
+                    "estimated_cost_usd": _estimate_cost_usd(model_code, viz_usage),
+                }
+            )
             debug["reponse_2_grok"] = viz_response_raw
             viz_code = _extract_python_code(viz_response_raw)
             result_schema = _schema_without_data(result_df)
@@ -492,7 +546,15 @@ if submit_viz:
                         result_columns=result_schema,
                     )
                     debug["prompt_viz_repair"] = repair_prompt
-                    repair_response_raw = _call_grok(repair_prompt, model_code)
+                    repair_response_raw, viz_repair_usage = _call_grok(repair_prompt, model_code)
+                    llm_usage_rows.append(
+                        {
+                            "step": f"viz_repair_attempt_{attempt}",
+                            "model": model_code,
+                            **viz_repair_usage,
+                            "estimated_cost_usd": _estimate_cost_usd(model_code, viz_repair_usage),
+                        }
+                    )
                     debug["reponse_viz_repair"] = repair_response_raw
                     viz_code = _extract_python_code(repair_response_raw)
 
@@ -522,6 +584,27 @@ if submit_viz:
                 "payload_json": jira_payload_json,
             }
 
+            usage_df = pd.DataFrame(llm_usage_rows)
+            if not usage_df.empty:
+                usage_df["estimated_cost_usd"] = usage_df["estimated_cost_usd"].fillna(0.0)
+                total_prompt = int(usage_df["prompt_tokens"].sum())
+                total_completion = int(usage_df["completion_tokens"].sum())
+                total_tokens = int(usage_df["total_tokens"].sum())
+                total_cost = float(usage_df["estimated_cost_usd"].sum())
+
+                st.markdown("### Usage et cout LLM (estimation)")
+                st.dataframe(
+                    usage_df,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.caption(
+                    "Total tokens "
+                    f"(prompt/completion/total): {total_prompt}/{total_completion}/{total_tokens} "
+                    f"| Cout estime: ${total_cost:.6f}"
+                )
+                debug["llm_usage_json"] = usage_df.to_json(orient="records", force_ascii=True)
+
             debug["jira_payload_json"] = jira_payload_json
         except Exception as error:
             st.error(f"Echec workflow auto: {error}")
@@ -548,6 +631,8 @@ if submit_viz:
             st.code(debug.get("code_viz", ""), language="python")
             st.markdown("#### JSON type Jira genere")
             st.code(debug.get("jira_payload_json", ""), language="json")
+            st.markdown("#### Usage LLM (JSON)")
+            st.code(debug.get("llm_usage_json", ""), language="json")
 
 st.info(
     "Workflow Grok: (1) prompt SQL a partir de la doc, (2) execution SQL, "
