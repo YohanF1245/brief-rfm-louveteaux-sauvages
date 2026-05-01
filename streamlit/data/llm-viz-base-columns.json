@@ -1,0 +1,88 @@
+{
+  "table": "public.cleaned_orders",
+  "table_doc": "Donnees nettoyees de base du flux RFM, sans scoring RFM.",
+  "rows": [
+    {
+      "row_name": "invoice",
+      "row_type": "text",
+      "row_doc": "Identifiant de facture/commande",
+      "allowed_for_sql_generation": true
+    },
+    {
+      "row_name": "stock_code",
+      "row_type": "text",
+      "row_doc": "Code produit (SKU)",
+      "allowed_for_sql_generation": true
+    },
+    {
+      "row_name": "description",
+      "row_type": "text",
+      "row_doc": "Libelle produit",
+      "allowed_for_sql_generation": true
+    },
+    {
+      "row_name": "quantity",
+      "row_type": "numeric",
+      "row_doc": "Quantite achetee sur la ligne",
+      "allowed_for_sql_generation": true
+    },
+    {
+      "row_name": "invoice_date",
+      "row_type": "datetime",
+      "row_doc": "Date/heure de la facture",
+      "allowed_for_sql_generation": true
+    },
+    {
+      "row_name": "price",
+      "row_type": "numeric",
+      "row_doc": "Prix unitaire de la ligne",
+      "allowed_for_sql_generation": true
+    },
+    {
+      "row_name": "customer_id",
+      "row_type": "text",
+      "row_doc": "Identifiant client",
+      "allowed_for_sql_generation": true
+    },
+    {
+      "row_name": "country",
+      "row_type": "text",
+      "row_doc": "Pays du client",
+      "allowed_for_sql_generation": true
+    },
+    {
+      "row_name": "total_price",
+      "row_type": "numeric",
+      "row_doc": "Montant de ligne (quantity * price)",
+      "allowed_for_sql_generation": true
+    }
+  ],
+  "excluded_rows": [
+    "recency",
+    "frequency",
+    "monetary",
+    "r_score",
+    "f_score",
+    "m_score",
+    "rfm_score",
+    "rfm_total",
+    "segment",
+    "categorisation"
+  ],
+  "prompt_contract_for_sql": {
+    "goal": "Generer une requete SQL uniquement sur la table documentee et les colonnes autorisees.",
+    "strict_rules": [
+      "n'utiliser que table = public.cleaned_orders",
+      "n'utiliser que rows[].row_name",
+      "ne jamais utiliser excluded_rows",
+      "interdiction d'inventer une colonne non presente dans rows[].row_name",
+      "si une colonne demandee est absente, retourner une erreur explicite",
+      "retourner uniquement du SQL PostgreSQL valide",
+      "interdire DELETE, UPDATE, INSERT, DROP, ALTER, TRUNCATE"
+    ],
+    "expected_output": {
+      "sql": "SELECT ...",
+      "why": "Explication courte de la logique de requete"
+    }
+  }
+}
