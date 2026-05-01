@@ -6,6 +6,7 @@ from pathlib import Path
 
 import altair as alt
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -113,7 +114,7 @@ Contraintes:
 - pas de SQL
 - pas de texte hors code
 - pas de colonne inventee
-- libs: streamlit, pandas, altair, plotly, seaborn, matplotlib
+- libs: streamlit, pandas, numpy, altair, plotly, seaborn, matplotlib
 - choisir les imports en fonction des types de colonnes disponibles, et importer uniquement le strict necessaire
 - garder `if df.empty`
 
@@ -141,7 +142,7 @@ Le code actuel echoue a l'execution.
 
 Contraintes globales:
 - Retourner uniquement du code Python executable
-- N'utiliser que: streamlit, pandas, altair, plotly, seaborn, matplotlib
+- N'utiliser que: streamlit, pandas, numpy, altair, plotly, seaborn, matplotlib
 - Ne pas inventer de colonnes
 - Utiliser uniquement ce schema de resultat: {result_columns}
 - Garder une gestion `if df.empty`
@@ -174,7 +175,7 @@ def _extract_python_code(text: str) -> str:
 
 
 def _assert_safe_viz_code(viz_code: str) -> None:
-    allowed_imports = {"streamlit", "pandas", "altair", "plotly", "seaborn", "matplotlib"}
+    allowed_imports = {"streamlit", "pandas", "numpy", "altair", "plotly", "seaborn", "matplotlib"}
     forbidden_calls = {"exec", "eval", "__import__", "open"}
 
     tree = ast.parse(viz_code)
@@ -452,6 +453,7 @@ if submit_viz:
             exec_globals = {
                 "st": st,
                 "pd": pd,
+                "np": np,
                 "alt": alt,
                 "px": px,
                 "go": go,
