@@ -219,8 +219,10 @@ def _assert_safe_select_sql(sql_query: str, doc: dict) -> None:
     lower = sql_query.strip().lower()
     forbidden = [" delete ", " update ", " insert ", " drop ", " alter ", " truncate "]
     normalized = f" {lower} "
-    if not lower.startswith("select"):
-        raise ValueError("La requete doit commencer par SELECT.")
+    if not (lower.startswith("select") or lower.startswith("with ")):
+        raise ValueError("La requete doit commencer par SELECT ou WITH (CTE).")
+    if lower.startswith("with ") and " select " not in normalized:
+        raise ValueError("CTE invalide: la requete WITH doit contenir un SELECT final.")
     if any(token in normalized for token in forbidden):
         raise ValueError("Requete interdite: operation non-SELECT detectee.")
     if doc["table"].lower() not in lower:
