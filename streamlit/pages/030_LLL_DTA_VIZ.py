@@ -63,6 +63,8 @@ Documentation des colonnes:
 
 Regles strictes:
 - {chr(10).join(f"- {rule}" for rule in minimal_rules)}
+- Compat PostgreSQL: pour un ecart en jours, utiliser `DATE_PART('day', ...)` ou une soustraction de dates cast en `date`
+- Ne jamais caster directement un `interval` en `int`
 
 Format de sortie OBLIGATOIRE (JSON strict):
 {{
@@ -72,6 +74,30 @@ Format de sortie OBLIGATOIRE (JSON strict):
 
 Question utilisateur:
 {user_question}
+"""
+
+
+def _build_sql_repair_prompt(
+    previous_sql: str,
+    error_message: str,
+    doc: dict,
+) -> str:
+    allowed = [row["row_name"] for row in doc["rows"]]
+    return f"""Corrige la requete SQL PostgreSQL suivante qui echoue a l'execution.
+Retourne uniquement un JSON strict:
+{{
+  "sql": "SELECT ...",
+  "why": "Explication courte"
+}}
+
+Table autorisee: {doc["table"]}
+Colonnes autorisees: {", ".join(allowed)}
+
+Erreur observee:
+{error_message}
+
+SQL a corriger:
+{previous_sql}
 """
 
 
@@ -371,7 +397,37 @@ if submit_viz:
             if why_sql:
                 st.caption(why_sql)
 
-            result_df = _run_sql_query(sql_query)
+            result_df = pd.DataFrame()
+            sql_executed = False
+            last_sql_error = ""
+            for attempt in range(1, 3):
+                try:
+                    result_df = _run_sql_query(sql_query)
+                    sql_executed = True
+                    break
+                except Exception as sql_error:
+                    last_sql_error = str(sql_error)
+                    debug[f"sql_error_attempt_{attempt}"] = last_sql_error
+                    if attempt == 2:
+                        break
+                    repair_prompt = _build_sql_repair_prompt(
+                        previous_sql=sql_query,
+                        error_message=last_sql_error,
+                        doc=doc,
+                    )
+                    debug["prompt_sql_repair"] = repair_prompt
+                    sql_repair_raw = _call_grok(repair_prompt, model_sql)
+                    debug["reponse_sql_repair"] = sql_repair_raw
+                    sql_repair_payload = _extract_json_block(sql_repair_raw)
+                    sql_query = str(sql_repair_payload.get("sql", "")).strip()
+                    why_sql = str(sql_repair_payload.get("why", why_sql)).strip()
+                    if not sql_query:
+                        raise ValueError("La reparation SQL n'a pas retourne de champ `sql`.")
+                    _assert_safe_select_sql(sql_query, doc)
+
+            if not sql_executed:
+                raise ValueError(f"Echec execution SQL apres correction auto: {last_sql_error}")
+
             st.markdown("### Resultat SQL")
             st.dataframe(result_df.head(200), use_container_width=True, hide_index=True)
             if result_df.empty:
@@ -462,6 +518,10 @@ if submit_viz:
             st.code(debug.get("prompt_sql_enrichi", ""), language="text")
             st.markdown("#### Reponse 1 Grok")
             st.code(debug.get("reponse_1_grok", ""), language="text")
+            st.markdown("#### Prompt repair SQL (si utilise)")
+            st.code(debug.get("prompt_sql_repair", ""), language="text")
+            st.markdown("#### Reponse repair SQL (si utilise)")
+            st.code(debug.get("reponse_sql_repair", ""), language="text")
             st.markdown("#### Prompt enrichi VIZ")
             st.code(debug.get("prompt_viz_enrichi", ""), language="text")
             st.markdown("#### Reponse 2 Grok")
