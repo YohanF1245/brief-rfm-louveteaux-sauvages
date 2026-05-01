@@ -174,11 +174,26 @@ Code a corriger:
 
 def _extract_json_block(text: str) -> dict:
     raw = text.strip()
-    if raw.startswith("```"):
-        lines = raw.splitlines()
-        if len(lines) >= 3:
-            raw = "\n".join(lines[1:-1]).strip()
-    return json.loads(raw)
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw, flags=re.IGNORECASE)
+    candidate = fenced.group(1).strip() if fenced else raw
+
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        pass
+
+    first_brace = candidate.find("{")
+    if first_brace == -1:
+        raise ValueError("Aucun JSON detecte dans la reponse du modele.")
+
+    decoder = json.JSONDecoder()
+    try:
+        parsed, _ = decoder.raw_decode(candidate[first_brace:])
+        return parsed
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "JSON invalide recu du modele (reponse potentiellement tronquee)."
+        ) from exc
 
 
 def _extract_python_code(text: str) -> str:
@@ -243,6 +258,7 @@ def _call_grok(prompt: str, model: str) -> tuple[str, dict[str, int]]:
         json={
             "model": model,
             "temperature": 0.1,
+            "max_tokens": 4096,
             "messages": [{"role": "user", "content": prompt}],
         },
         timeout=90,
@@ -260,8 +276,6 @@ def _assert_safe_select_sql(sql_query: str, doc: dict) -> None:
     normalized = f" {lower} "
     if not (lower.startswith("select") or lower.startswith("with ")):
         raise ValueError("La requete doit commencer par SELECT ou WITH (CTE).")
-    if lower.startswith("with ") and " select " not in normalized:
-        raise ValueError("CTE invalide: la requete WITH doit contenir un SELECT final.")
     if any(token in normalized for token in forbidden):
         raise ValueError("Requete interdite: operation non-SELECT detectee.")
     if doc["table"].lower() not in lower:
