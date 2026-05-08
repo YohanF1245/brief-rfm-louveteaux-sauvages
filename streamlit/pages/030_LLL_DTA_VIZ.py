@@ -132,6 +132,9 @@ Contraintes:
 - libs: streamlit, pandas, numpy, altair, plotly, seaborn, matplotlib
 - choisir les imports en fonction des types de colonnes disponibles, et importer uniquement le strict necessaire
 - garder `if df.empty`
+- utiliser exclusivement le DataFrame `df` deja fourni par le runtime
+- interdit de redefinir/reassigner `df`
+- interdit de creer des donnees d'exemple (pd.DataFrame({...}), listes hardcodees, CSV inline, etc.)
 
 SQL valide deja retenu:
 {sql_query}
@@ -161,6 +164,9 @@ Contraintes globales:
 - Ne pas inventer de colonnes
 - Utiliser uniquement ce schema de resultat: {result_columns}
 - Garder une gestion `if df.empty`
+- Utiliser exclusivement le DataFrame `df` fourni
+- Interdit de redefinir/reassigner `df`
+- Interdit de creer un nouveau dataset (ex: `pd.DataFrame`, `pd.read_csv`, dict/list hardcode pour simuler les donnees)
 
 Erreur observee:
 {error_message}
@@ -207,6 +213,13 @@ def _extract_python_code(text: str) -> str:
 def _assert_safe_viz_code(viz_code: str) -> None:
     allowed_imports = {"streamlit", "pandas", "numpy", "altair", "plotly", "seaborn", "matplotlib"}
     forbidden_calls = {"exec", "eval", "__import__", "open"}
+    forbidden_pandas_builders = {
+        ("pd", "DataFrame"),
+        ("pd", "read_csv"),
+        ("pd", "read_excel"),
+        ("pd", "read_json"),
+        ("pd", "read_parquet"),
+    }
 
     tree = ast.parse(viz_code)
     for node in ast.walk(tree):
@@ -222,6 +235,22 @@ def _assert_safe_viz_code(viz_code: str) -> None:
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             if node.func.id in forbidden_calls:
                 raise ValueError(f"Appel interdit detecte: {node.func.id}")
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+        ):
+            if (node.func.value.id, node.func.attr) in forbidden_pandas_builders:
+                raise ValueError(
+                    f"Creation/chargement de dataset interdit: {node.func.value.id}.{node.func.attr}"
+                )
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "df":
+                    raise ValueError("Reaffectation de `df` interdite.")
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.target.id == "df":
+                raise ValueError("Reaffectation de `df` interdite.")
 
 
 def _normalize_usage(payload: dict) -> dict[str, int]:
@@ -432,6 +461,8 @@ if submit_viz:
         st.warning("Saisis une question avant de lancer le workflow.")
     else:
         debug: dict[str, str] = {}
+        spinner_cm = st.spinner("Generation en cours... merci de patienter.")
+        spinner_cm.__enter__()
         try:
             sql_prompt = _build_sql_prompt(question.strip(), doc)
             debug["prompt_sql_enrichi"] = sql_prompt
@@ -623,6 +654,7 @@ if submit_viz:
         except Exception as error:
             st.error(f"Echec workflow auto: {error}")
         finally:
+            spinner_cm.__exit__(None, None, None)
             st.markdown("---")
             st.markdown("### Debug workflow")
             st.markdown("#### Prompt enrichi SQL")
