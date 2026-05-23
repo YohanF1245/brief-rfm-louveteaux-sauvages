@@ -1,14 +1,16 @@
+import os
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 from airflow import DAG
-from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
+from airflow.providers.standard.operators.python import PythonOperator
 
 RAW_PATH_1 = Path(__file__).resolve().parent / "data/raw_climat_data/50-24.gz"
 RAW_PATH_2 = Path(__file__).resolve().parent / "data/raw_climat_data/25-26.gz"
-STAGING_DIR = Path(__file__).resolve().parent / "data/staging"
+# /opt/airflow/dags est monté en lecture seule pour l'utilisateur airflow → staging dans /tmp
+STAGING_DIR = Path(os.environ.get("METEO_NORD_STAGING_DIR", "/tmp/meteo_nord_staging"))
 STAGING_RAW = STAGING_DIR / "climat_raw.pkl"
 STAGING_CURATED = STAGING_DIR / "climat_curated.pkl"
 
