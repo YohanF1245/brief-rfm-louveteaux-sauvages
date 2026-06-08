@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<clickhouse>
+    <!-- Requis pour accéder à l'interface HTTP depuis l'hôte (Docker port mapping). -->
+    <listen_host>0.0.0.0</listen_host>
+</clickhouse>
