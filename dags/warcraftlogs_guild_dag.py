@@ -1,28 +1,33 @@
 """
 Ingestion Warcraft Logs — guilde Nightmares Asylum (Dalaran EU).
 
-Pipeline incrémental bronze :
-  1. Catalogue API (léger) → Postgres
-  2. Par report : fights + stats (tous combats) → Postgres + Delta MinIO immédiat
+Flux lakehouse (sans Postgres) :
+  API WCL → bronze Delta (MinIO) → ClickHouse (``deltaLake()``)
+
+  1. ``sync_report_catalog`` — catalogue API → ``ingestion_state`` (Delta)
+  2. ``ingest_reports_incremental`` — par report : fights + stats → bronze Delta
 
 Chemins bronze :
   - ``s3://lake/bronze/warcraftlogs/guild_reports``
   - ``s3://lake/bronze/warcraftlogs/fights``
   - ``s3://lake/bronze/warcraftlogs/fight_player_stats``
   - ``s3://lake/bronze/warcraftlogs/reports_raw``
+  - ``s3://lake/bronze/warcraftlogs/ingestion_state``
 
-Secrets : ``WCL_CLIENT_ID``, ``WCL_CLIENT_SECRET``.
-Optionnel : ``WCL_GUILD_URL``, ``WCL_USER_IDS``, ``WCL_API_SLEEP_SECONDS``,
-``WCL_MAX_REPORT_PAGES``, ``WCL_INGEST_BATCH_SIZE``, ``WCL_DAG_SCHEDULE``.
+Airflow :
+  - Connexion ``WCL_API`` (HTTP) : login = client_id, password = client_secret
+  - Variables : ``wcl_guild_url``, ``wcl_user_ids``, ``wcl_ingest_batch_size``, etc.
+
+MinIO / ClickHouse : réseau Docker + creds compose (pas de connexion Airflow).
 """
 
 from __future__ import annotations
 
-import os
 from datetime import datetime
 
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
+from airflow.sdk import Variable
 
 from warcraftlogs_ingest import ingest_reports_incremental, sync_report_catalog
 
@@ -30,7 +35,10 @@ _DEFAULT_SCHEDULE = "0 */6 * * *"
 
 
 def _dag_schedule() -> str | None:
-    raw = os.environ.get("WCL_DAG_SCHEDULE", _DEFAULT_SCHEDULE).strip()
+    try:
+        raw = str(Variable.get("wcl_dag_schedule", default=_DEFAULT_SCHEDULE)).strip()
+    except Exception:
+        raw = _DEFAULT_SCHEDULE
     if not raw or raw.lower() in {"none", "null", "manual"}:
         return None
     return raw
