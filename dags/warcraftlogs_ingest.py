@@ -17,6 +17,7 @@ from warcraftlogs_common import (
     guild_url_from_env,
 )
 from warcraftlogs_lake import (
+    bulk_upsert_catalog_state,
     export_fight_tables_raw_to_bronze,
     export_report_raw_to_bronze,
     export_report_tables_to_bronze,
@@ -25,7 +26,6 @@ from warcraftlogs_lake import (
     mark_ingestion_error,
     mark_ingestion_ok,
     report_catalog_row,
-    upsert_catalog_state,
 )
 
 _RATE_LIMIT_RE = re.compile(r"\b(429|4\d{2})\b|rate.?limit", re.I)
@@ -55,11 +55,10 @@ def sync_report_catalog(**_) -> int:
         print("Catalogue WCL vide.")
         return 0
 
-    for report in reports:
-        upsert_catalog_state(report, guild, keys)
+    pending_n = bulk_upsert_catalog_state(reports, guild, keys)
 
     print(
-        f"Catalogue Delta : {len(reports)} reports "
+        f"Catalogue Delta : {len(reports)} reports API, {pending_n} pending/error mis à jour "
         f"(guilde={payload.get('guild_reports_count')} "
         f"perso={payload.get('personal_reports_count')})"
     )

@@ -78,14 +78,15 @@ def replace_report_in_bronze(
     storage = s3_storage_options()
     safe_code = _escape_sql_literal(report_code)
 
-    if _delta_table_exists(path):
+    exists = _delta_table_exists(path)
+    if exists:
         dt = DeltaTable(path, storage_options=storage)
         if fight_id is not None:
             dt.delete(f"report_code = '{safe_code}' AND fight_id = {int(fight_id)}")
         else:
             dt.delete(f"report_code = '{safe_code}'")
 
-    mode = "append" if _delta_table_exists(path) else "overwrite"
+    mode = "append" if exists else "overwrite"
     write_deltalake(
         path,
         prepared,
@@ -122,47 +123,80 @@ def report_catalog_row(
     }
 
 
+def _catalog_state_row(
+    report: dict[str, Any],
+    guild: dict[str, Any],
+    keys: dict[str, Any],
+    *,
+    attempts: int = 0,
+) -> dict[str, Any]:
+    return {
+        "report_code": report.get("code"),
+        "status": "pending",
+        "title": report.get("title"),
+        "start_time_ms": report.get("startTime"),
+        "last_error": None,
+        "ingestion_attempts": attempts,
+        "synced_at": None,
+        "fetched_at": pd.Timestamp.utcnow(),
+        "catalog_json": json.dumps(
+            {"report": report, "guild": guild, "keys": keys},
+            ensure_ascii=False,
+        ),
+    }
+
+
+def bulk_upsert_catalog_state(
+    reports: list[dict[str, Any]],
+    guild: dict[str, Any],
+    keys: dict[str, Any],
+) -> int:
+    """Catalogue API → Delta ingestion_state en une passe (évite l'épuisement TCP MinIO)."""
+    df = read_delta_df(BRONZE_PATHS["ingestion_state"])
+    updated = 0
+
+    for report in reports:
+        code = report.get("code")
+        if not code:
+            continue
+
+        if not df.empty:
+            match = df[df["report_code"] == code]
+            if not match.empty and str(match.iloc[0].get("status", "")) == "ok":
+                continue
+            attempts = int(match.iloc[0].get("ingestion_attempts") or 0) if not match.empty else 0
+        else:
+            attempts = 0
+
+        row = _catalog_state_row(report, guild, keys, attempts=attempts)
+        if not df.empty and code in df["report_code"].values:
+            idx = df.index[df["report_code"] == code][0]
+            for col, value in row.items():
+                df.at[idx, col] = value
+        else:
+            df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+        updated += 1
+
+    if updated == 0:
+        return 0
+
+    storage = s3_storage_options()
+    write_deltalake(
+        BRONZE_PATHS["ingestion_state"],
+        _prepare_delta_df(df),
+        mode="overwrite",
+        storage_options=storage,
+    )
+    return updated
+
+
 def upsert_catalog_state(
     report: dict[str, Any],
     guild: dict[str, Any],
     keys: dict[str, Any],
 ) -> None:
     """Catalogue API → Delta ingestion_state (pending si pas déjà ok)."""
-    code = report.get("code")
-    if not code:
-        return
-
-    existing = read_delta_df(BRONZE_PATHS["ingestion_state"])
-    if not existing.empty:
-        match = existing[existing["report_code"] == code]
-        if not match.empty and str(match.iloc[0].get("status", "")) == "ok":
-            return
-
-    attempts = 0
-    if not existing.empty:
-        match = existing[existing["report_code"] == code]
-        if not match.empty:
-            attempts = int(match.iloc[0].get("ingestion_attempts") or 0)
-
-    row = pd.DataFrame(
-        [
-            {
-                "report_code": code,
-                "status": "pending",
-                "title": report.get("title"),
-                "start_time_ms": report.get("startTime"),
-                "last_error": None,
-                "ingestion_attempts": attempts,
-                "synced_at": None,
-                "fetched_at": pd.Timestamp.utcnow(),
-                "catalog_json": json.dumps(
-                    {"report": report, "guild": guild, "keys": keys},
-                    ensure_ascii=False,
-                ),
-            }
-        ]
-    )
-    replace_report_in_bronze(BRONZE_PATHS["ingestion_state"], row, code)
+    bulk_upsert_catalog_state([report], guild, keys)
 
 
 def list_pending_report_codes(limit: int | None = None) -> list[str]:
