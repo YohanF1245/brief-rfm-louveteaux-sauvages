@@ -23,7 +23,7 @@ from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk import Variable
 
-from lakehouse_common import run_dbt, run_dbt_test
+from lakehouse_common import WCL_DBT_GOLD, WCL_DBT_SILVER, run_dbt, run_dbt_test
 
 
 def _dbt_schedule() -> str | None:
@@ -48,17 +48,17 @@ with DAG(
     dbt_silver = PythonOperator(
         task_id="dbt_silver",
         python_callable=run_dbt,
-        op_kwargs={"select": "tag:warcraftlogs,tag:silver"},
+        op_kwargs={"select": WCL_DBT_SILVER},
     )
     dbt_gold = PythonOperator(
         task_id="dbt_gold",
         python_callable=run_dbt,
-        op_kwargs={"select": "tag:warcraftlogs,tag:gold"},
+        op_kwargs={"select": WCL_DBT_GOLD},
     )
     dbt_test_gold = PythonOperator(
         task_id="dbt_test_gold",
         python_callable=run_dbt_test,
-        op_kwargs={"select": "tag:warcraftlogs,tag:gold"},
+        op_kwargs={"select": WCL_DBT_GOLD},
     )
 
     dbt_silver >> dbt_gold >> dbt_test_gold
