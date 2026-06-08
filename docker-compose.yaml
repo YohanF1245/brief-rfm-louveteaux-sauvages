@@ -71,8 +71,11 @@ x-airflow-common:
     # See https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html#scheduler-health-check-server
     # yamllint enable rule:line-length
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW__API__BASE_URL: ${AIRFLOW_WEBSERVER_BASE_URL:-https://ymfo1nom.com/airflow}
     AIRFLOW__WEBSERVER__BASE_URL: ${AIRFLOW_WEBSERVER_BASE_URL:-https://ymfo1nom.com/airflow}
     AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: 'true'
+    AIRFLOW__FAB__ENABLE_PROXY_FIX: 'true'
+    FORWARDED_ALLOW_IPS: '*'
     AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
     AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
     AWS_ENDPOINT_URL: http://minio:9000
@@ -257,7 +260,7 @@ services:
 
   airflow-apiserver:
     <<: *airflow-common
-    command: api-server
+    command: ["bash", "-c", "exec airflow api-server --proxy-headers"]
     expose:
       - "8080"
     healthcheck:
