@@ -13,6 +13,9 @@ venv/
 # Env
 .env
 
+# ClickHouse : mot de passe local (copie de default-user.xml.example)
+clickhouse/users.d/default-user.xml
+
 # Logs
 logs/
 
