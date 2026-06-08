@@ -35,6 +35,13 @@ jobs:
             --exclude "nginx/certbot/conf/" \
             ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/"
 
+      - name: Verify dbt WCL models on server
+        run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "test -f '${{ secrets.DEPLOY_PATH }}/dbt/models/silver/wcl_reports.sql' && \
+             test -f '${{ secrets.DEPLOY_PATH }}/dbt/models/gold/wcl_boss_dps.sql' && \
+             ls '${{ secrets.DEPLOY_PATH }}/dbt/models/silver/wcl_'*.sql"
+
       - name: Write runtime .env and deploy
         run: |
           ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "mkdir -p '${{ secrets.DEPLOY_PATH }}'"
@@ -62,5 +69,19 @@ jobs:
           MINIO_BROWSER_REDIRECT_URL=${{ secrets.MINIO_BROWSER_REDIRECT_URL }}
           CLICKHOUSE_USER=${{ secrets.CLICKHOUSE_USER }}
           CLICKHOUSE_PASSWORD=${{ secrets.CLICKHOUSE_PASSWORD }}
+          DBT_CLICKHOUSE_HOST=clickhouse
+          DBT_CLICKHOUSE_PORT=8123
+          DBT_CLICKHOUSE_USER=${{ secrets.CLICKHOUSE_USER }}
+          DBT_CLICKHOUSE_PASSWORD=${{ secrets.CLICKHOUSE_PASSWORD }}
           EOF"
-          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "cd '${{ secrets.DEPLOY_PATH }}' && docker compose pull && docker compose build --pull dbt dbt-docs streamlit && docker compose up -d --remove-orphans && docker compose up -d --force-recreate nginx streamlit airflow-apiserver airflow-worker airflow-scheduler"
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "cd '${{ secrets.DEPLOY_PATH }}' && \
+            docker compose pull && \
+            docker compose build --pull dbt dbt-docs streamlit && \
+            docker compose up -d --remove-orphans && \
+            docker compose up -d --force-recreate \
+              nginx streamlit \
+              dbt dbt-docs \
+              airflow-apiserver airflow-worker airflow-scheduler airflow-dag-processor && \
+            until docker compose exec -T clickhouse wget -q -O- http://localhost:8123/ping; do sleep 3; done && \
+            docker compose run --rm dbt dbt deps && \
+            docker compose run --rm dbt dbt ls --resource-type model --output name --quiet"
