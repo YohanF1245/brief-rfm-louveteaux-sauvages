@@ -11,6 +11,7 @@ Chemins bronze :
   - ``s3://lake/bronze/warcraftlogs/guild_reports``
   - ``s3://lake/bronze/warcraftlogs/fights``
   - ``s3://lake/bronze/warcraftlogs/fight_player_stats``
+  - ``s3://lake/bronze/warcraftlogs/fight_tables_raw`` (JSON API complet par TableDataType)
   - ``s3://lake/bronze/warcraftlogs/reports_raw``
   - ``s3://lake/bronze/warcraftlogs/ingestion_state``
 
