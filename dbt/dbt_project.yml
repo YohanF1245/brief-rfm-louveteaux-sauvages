@@ -14,6 +14,16 @@ models:
     silver:
       +materialized: table
       +schema: silver
+      wcl_reports:
+        +tags: [warcraftlogs, silver]
+      wcl_fights:
+        +tags: [warcraftlogs, silver]
+      wcl_player_fight_metrics:
+        +tags: [warcraftlogs, silver]
+      wcl_ingestion_state:
+        +tags: [warcraftlogs, silver]
     gold:
       +materialized: table
       +schema: gold
+      wcl_boss_dps:
+        +tags: [warcraftlogs, gold]
