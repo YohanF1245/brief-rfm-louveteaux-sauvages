@@ -19,6 +19,9 @@ DEFAULT_GUILD_URL = (
     "https://www.warcraftlogs.com/guild/eu/dalaran/nightmares%20asylum"
 )
 
+# Connexion Airflow : login = client_id, password = client_secret (type HTTP).
+WCL_CONN_ID = "WCL_API"
+
 REPORT_PAGE_SIZE = 100
 
 USER_REPORTS_QUERY = """
@@ -166,32 +169,17 @@ def parse_guild_url(url: str) -> dict[str, str]:
     }
 
 
-def api_sleep_seconds() -> float:
-    raw = os.environ.get("WCL_API_SLEEP_SECONDS", "0.5").strip()
+def _airflow_variable(name: str, default: str = "") -> str:
     try:
-        return max(0.0, float(raw))
-    except ValueError:
-        return 0.5
+        from airflow.sdk import Variable
+
+        return str(Variable.get(name, default=default)).strip()
+    except Exception:
+        return default
 
 
-def max_report_pages() -> int | None:
-    raw = os.environ.get("WCL_MAX_REPORT_PAGES", "").strip()
-    if not raw:
-        return None
-    try:
-        return max(1, int(raw))
-    except ValueError:
-        return None
-
-
-def guild_url_from_env() -> str:
-    return os.environ.get("WCL_GUILD_URL", DEFAULT_GUILD_URL).strip() or DEFAULT_GUILD_URL
-
-
-def user_ids_from_env() -> list[int]:
-    """IDs WCL des membres (logs personnels publics), CSV dans ``WCL_USER_IDS``."""
-    raw = os.environ.get("WCL_USER_IDS", "").strip()
-    if not raw:
+def _parse_user_ids_csv(raw: str) -> list[int]:
+    if not raw.strip():
         return []
     ids: list[int] = []
     for chunk in raw.split(","):
@@ -201,19 +189,65 @@ def user_ids_from_env() -> list[int]:
         try:
             ids.append(int(chunk))
         except ValueError as exc:
-            raise ValueError(f"WCL_USER_IDS invalide ({chunk!r}) : entiers séparés par des virgules.") from exc
+            raise ValueError(
+                f"Liste d'IDs WCL invalide ({chunk!r}) : entiers séparés par des virgules."
+            ) from exc
     return ids
 
 
+def api_sleep_seconds() -> float:
+    raw = _airflow_variable("wcl_api_sleep_seconds") or os.environ.get("WCL_API_SLEEP_SECONDS", "0.5")
+    try:
+        return max(0.0, float(raw.strip()))
+    except ValueError:
+        return 0.5
+
+
+def max_report_pages() -> int | None:
+    raw = _airflow_variable("wcl_max_report_pages") or os.environ.get("WCL_MAX_REPORT_PAGES", "")
+    if not raw.strip():
+        return None
+    try:
+        return max(1, int(raw.strip()))
+    except ValueError:
+        return None
+
+
+def guild_url_from_env() -> str:
+    """URL guilde : Variable Airflow ``wcl_guild_url`` ou fallback env/local."""
+    raw = _airflow_variable("wcl_guild_url") or os.environ.get("WCL_GUILD_URL", DEFAULT_GUILD_URL)
+    return raw.strip() or DEFAULT_GUILD_URL
+
+
+def user_ids_from_env() -> list[int]:
+    """IDs membres (logs perso publics) : Variable ``wcl_user_ids`` ou env."""
+    raw = _airflow_variable("wcl_user_ids") or os.environ.get("WCL_USER_IDS", "")
+    return _parse_user_ids_csv(raw)
+
+
 def _wcl_credentials() -> tuple[str, str]:
+    """OAuth client_credentials : connexion Airflow ``WCL_API`` (login + password)."""
+    try:
+        from airflow.hooks.base import BaseHook
+
+        conn = BaseHook.get_connection(WCL_CONN_ID)
+        client_id = (conn.login or "").strip()
+        client_secret = (conn.password or "").strip()
+        if client_id and client_secret:
+            return client_id, client_secret
+    except Exception:
+        pass
+
     client_id = os.environ.get("WCL_CLIENT_ID", "").strip()
     client_secret = os.environ.get("WCL_CLIENT_SECRET", "").strip()
-    if not client_id or not client_secret:
-        raise RuntimeError(
-            "Variables WCL_CLIENT_ID et WCL_CLIENT_SECRET requises "
-            "(client API sur https://www.warcraftlogs.com/api/docs)."
-        )
-    return client_id, client_secret
+    if client_id and client_secret:
+        return client_id, client_secret
+
+    raise RuntimeError(
+        f"Connexion Airflow '{WCL_CONN_ID}' requise (login=client_id, password=client_secret). "
+        "Créer un client sur https://www.warcraftlogs.com/api/docs. "
+        "Fallback local : WCL_CLIENT_ID / WCL_CLIENT_SECRET dans l'environnement."
+    )
 
 
 def fetch_access_token() -> str:
@@ -534,7 +568,7 @@ def fetch_fight_tables(
 
 
 def fight_rows_from_report(report_code: str, report: dict[str, Any]) -> list[dict[str, Any]]:
-    """Normalise les fights API en lignes prêtes pour Postgres."""
+    """Normalise les fights API en lignes prêtes pour le bronze Delta."""
     rows: list[dict[str, Any]] = []
     for fight in report.get("fights") or []:
         if not isinstance(fight, dict):
