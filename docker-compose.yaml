@@ -142,7 +142,6 @@ services:
     environment:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD requis dans .env}
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
@@ -205,8 +204,8 @@ services:
     environment:
       DBT_CLICKHOUSE_HOST: clickhouse
       DBT_CLICKHOUSE_PORT: "8123"
-      DBT_CLICKHOUSE_USER: default
-      DBT_CLICKHOUSE_PASSWORD: ""
+      DBT_CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      DBT_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       DBT_POSTGRES_HOST: postgres-db
       DBT_POSTGRES_PORT: "5432"
       DBT_POSTGRES_USER: ${APP_DB_USER}
@@ -236,8 +235,8 @@ services:
     environment:
       DBT_CLICKHOUSE_HOST: clickhouse
       DBT_CLICKHOUSE_PORT: "8123"
-      DBT_CLICKHOUSE_USER: default
-      DBT_CLICKHOUSE_PASSWORD: ""
+      DBT_CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      DBT_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
     volumes:
       - ${AIRFLOW_PROJ_DIR:-.}/dbt:/usr/app
     expose:
