@@ -4,9 +4,17 @@
 
 Ce projet met en place une pipeline data RFM orchestrée avec Airflow, dockerisée avec Docker Compose, et exposée via Nginx.
 
-L'application est en ligne avec :
-- Airflow (UI/API) sur la racine `/`
-- Streamlit sur `/doc/`
+L'application est en ligne sur **https://ymfo1nom.com** :
+
+| Chemin | Service |
+|--------|---------|
+| `/` | Streamlit (viz) |
+| `/airflow/` | Airflow (UI + API) |
+| `/clickhouse/` | ClickHouse (HTTP) |
+| `/deltalake/` | MinIO Console (bucket `lake`, Delta / S3) |
+| `/dbt/` | dbt docs (catalogue modèles) |
+
+Ancienne route `/doc/` → redirection vers `/`.
 
 ## Architecture technique
 
@@ -15,14 +23,22 @@ Services principaux :
 - `redis` : broker Celery
 - `airflow-apiserver`, `airflow-scheduler`, `airflow-worker`, `airflow-triggerer`, `airflow-dag-processor`, `airflow-init`
 - `postgres-db` : base applicative RFM
-- `streamlit` : app de restitution (placeholder actuellement)
-- `nginx` : reverse proxy public (routage Airflow + Streamlit)
+- `clickhouse` : analytics OLAP (couche gold, lecture Delta)
+- `minio` + `minio-init` : stockage S3 local (`lake/`)
+- `dbt` / `dbt-docs` : transformations SQL versionnées
+- `streamlit` : app de restitution
+- `nginx` : reverse proxy public
 
-Flux global :
-1. Les DAGs Airflow orchestrent ingestion/transformation/chargement.
-2. Les données métier sont stockées dans `postgres-db` (base `rfm`).
-3. Streamlit lit les données en lecture seule.
-4. Nginx publie l'ensemble via un point d'entrée unique.
+Flux global (lakehouse) :
+1. Airflow ingère (API, fichiers, scrape) vers **MinIO** (`lake/`, format Delta/Parquet).
+2. **ClickHouse** lit le lake et sert l'analytics ; **dbt** matérialise la couche gold.
+3. **postgres-db** garde les données app / métadonnées classiques.
+4. **Streamlit** restitue ; **nginx** route tout sur `ymfo1nom.com`.
+
+```bash
+# dbt (dev)
+docker compose run --rm dbt dbt run
+```
 
 ## CI/CD (GitHub Actions)
 
@@ -60,6 +76,9 @@ Secrets runtime (principalement utilisés par `deploy.yml`) :
 - `AIRFLOW_WWW_USER_PASSWORD`
 - `NGINX_PUBLIC_PORT`
 - `PIP_ADDITIONAL_REQUIREMENTS`
+- `AIRFLOW_WEBSERVER_BASE_URL` (ex. `https://ymfo1nom.com/airflow`)
+- `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`
+- `MINIO_BROWSER_REDIRECT_URL` (ex. `https://ymfo1nom.com/deltalake`)
 
 ## Sécurité base de données
 
