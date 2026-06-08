@@ -29,7 +29,6 @@ def ingest_parquet() -> None:
             overwrite=True,
             chunk_size=50_000,
         )
-        print(f"write_pandas ok={ok} chunks={nchunks} rows={nrows}")
     finally:
         conn.close()
 
