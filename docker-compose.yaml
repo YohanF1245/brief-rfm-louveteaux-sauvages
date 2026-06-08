@@ -63,7 +63,7 @@ x-airflow-common:
     AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY}
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/airflow/execution/'
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-airflow_jwt_secret}
     AIRFLOW__API_AUTH__JWT_ISSUER: ${AIRFLOW__API_AUTH__JWT_ISSUER:-airflow}
     # yamllint disable rule:line-length
@@ -355,6 +355,7 @@ services:
 
   airflow-worker:
     <<: *airflow-common
+    hostname: airflow-worker
     command: celery worker
     healthcheck:
       # yamllint disable rule:line-length
@@ -368,6 +369,8 @@ services:
       # Required to handle warm shutdown of the celery workers properly
       # See https://airflow.apache.org/docs/docker-stack/entrypoint.html#signal-propagation
       DUMB_INIT_SETSID: "0"
+      # CeleryExecutor : hostname stable pour que l'UI lise les logs worker (port 8793).
+      AIRFLOW__LOGGING__WORKER_LOG_SERVER_HOST: airflow-worker
     restart: always
     depends_on:
       <<: *airflow-common-depends-on
