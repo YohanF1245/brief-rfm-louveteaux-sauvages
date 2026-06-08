@@ -303,6 +303,13 @@ services:
   streamlit:
     build:
       context: ./streamlit
+    command:
+      - streamlit
+      - run
+      - app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.baseUrlPath=
     expose:
       - "8501"
     restart: always
