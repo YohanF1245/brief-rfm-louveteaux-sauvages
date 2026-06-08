@@ -111,9 +111,9 @@ Le pipeline se divise en deux étapes :
 - Analyse des reviews concurentielles via plusieurs modeles llm
 
 Pour la visualisation des resulats trois pages ont été créées :
-- reviews steam : "https://ymfo1nom.com/doc/STEAM_REVIEWS"
-- analyse llm : "https://ymfo1nom.com/doc/STEAM_LLM_REVIEW"
-- stats llm : "https://ymfo1nom.com/doc/STEAM_LLM_KEYWORDS"
+- reviews steam : "https://ymfo1nom.com/STEAM_REVIEWS"
+- analyse llm : "https://ymfo1nom.com/STEAM_LLM_REVIEW"
+- stats llm : "https://ymfo1nom.com/STEAM_LLM_KEYWORDS"
 """)
 header_anchor("Prompt  Utilisé", anchor_id="prompt-utilise")
 
