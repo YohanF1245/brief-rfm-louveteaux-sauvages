@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<clickhouse>
+    <!--
+      NE PAS placer ce fichier dans config.d/ — ClickHouse ignore les <users> là-bas.
+      Copier vers default-user.xml UNIQUEMENT si tu refuses la variable .env CLICKHOUSE_PASSWORD.
+      Méthode recommandée : CLICKHOUSE_PASSWORD dans .env (entrypoint Docker).
+    -->
+    <users>
+        <default>
+            <password>change_me</password>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+        </default>
+    </users>
+</clickhouse>
