@@ -37,7 +37,17 @@ jobs:
       - name: Sync dbt project
         run: |
           rsync -az --delete \
+            --exclude logs/ \
+            --exclude target/ \
+            --exclude dbt_packages/ \
             ./dbt/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/dbt/"
+
+      - name: Fix dbt permissions for Airflow worker
+        run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "cd '${{ secrets.DEPLOY_PATH }}' && \
+             rm -rf dbt/logs dbt/target dbt/dbt_packages && \
+             chown -R '${{ secrets.AIRFLOW_UID }}':0 dbt"
 
       - name: Verify WCL models on server
         run: |
