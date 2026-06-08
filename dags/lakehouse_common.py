@@ -1,0 +1,115 @@
+"""Helpers lakehouse : MinIO (Delta) → dbt (ClickHouse silver/gold)."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import urllib.parse
+import urllib.request
+from datetime import date, timedelta
+from pathlib import Path
+
+import pandas as pd
+from deltalake import write_deltalake
+
+DBT_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt"))
+BRONZE_DELTA_PATH = "s3://lake/bronze/stack_test/ventes"
+DELTA_TABLE_URL = "http://minio:9000/lake/bronze/stack_test/ventes"
+
+
+def s3_storage_options() -> dict[str, str]:
+    return {
+        "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID", "minioadmin"),
+        "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY", "minioadmin"),
+        "AWS_ENDPOINT_URL": os.environ.get("AWS_ENDPOINT_URL", "http://minio:9000"),
+        "AWS_REGION": os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+        "AWS_ALLOW_HTTP": "true",
+    }
+
+
+def dbt_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("DBT_PROFILES_DIR", str(DBT_DIR))
+    env.setdefault("DBT_CLICKHOUSE_HOST", "clickhouse")
+    env.setdefault("DBT_CLICKHOUSE_PORT", "8123")
+    env.setdefault("DBT_CLICKHOUSE_USER", "default")
+    env.setdefault("DBT_CLICKHOUSE_PASSWORD", "")
+    env.setdefault("MINIO_ROOT_USER", os.environ.get("AWS_ACCESS_KEY_ID", "minioadmin"))
+    env.setdefault("MINIO_ROOT_PASSWORD", os.environ.get("AWS_SECRET_ACCESS_KEY", "minioadmin"))
+    return env
+
+
+def sample_ventes_df(rows: int = 500) -> pd.DataFrame:
+    """Jeu de test type ventes régionales (léger, reproductible)."""
+    rng = pd.Series(range(rows))
+    base = date.today() - timedelta(days=30)
+    return pd.DataFrame(
+        {
+            "event_date": [(base + timedelta(days=int(i % 30))).isoformat() for i in rng],
+            "region": rng.map(lambda i: ["Nord", "Sud", "Est", "Ouest"][i % 4]),
+            "product": rng.map(lambda i: ["Alpha", "Beta", "Gamma"][i % 3]),
+            "quantity": rng.map(lambda i: (i % 10) + 1),
+            "unit_price": rng.map(lambda i: round(10.0 + (i % 7) * 2.5, 2)),
+        }
+    )
+
+
+def ingest_bronze_delta(**_) -> int:
+    """Écrit la bronze Delta sur MinIO (bucket lake)."""
+    df = sample_ventes_df()
+    write_deltalake(
+        BRONZE_DELTA_PATH,
+        df,
+        mode="overwrite",
+        storage_options=s3_storage_options(),
+    )
+    print(f"Bronze Delta écrite : {BRONZE_DELTA_PATH} ({len(df)} lignes)")
+    return len(df)
+
+
+def run_dbt(select: str, **_) -> None:
+    """Lance dbt run dans le projet monté sur le worker Airflow."""
+    subprocess.run(
+        ["dbt", "deps", "--project-dir", str(DBT_DIR), "--profiles-dir", str(DBT_DIR)],
+        check=False,
+        env=dbt_env(),
+        cwd=str(DBT_DIR),
+    )
+    cmd = [
+        "dbt",
+        "run",
+        "--project-dir",
+        str(DBT_DIR),
+        "--profiles-dir",
+        str(DBT_DIR),
+        "--select",
+        select,
+    ]
+    print("Commande :", " ".join(cmd))
+    subprocess.run(cmd, check=True, env=dbt_env(), cwd=str(DBT_DIR))
+
+
+def run_dbt_test(select: str, **_) -> None:
+    cmd = [
+        "dbt",
+        "test",
+        "--project-dir",
+        str(DBT_DIR),
+        "--profiles-dir",
+        str(DBT_DIR),
+        "--select",
+        select,
+    ]
+    subprocess.run(cmd, check=True, env=dbt_env(), cwd=str(DBT_DIR))
+
+
+def validate_gold_power_bi(**_) -> int:
+    """Vérifie que la table gold exposée à Power BI contient des lignes."""
+    query = "SELECT count() FROM gold.stack_test_daily_kpis"
+    url = f"http://clickhouse:8123/?query={urllib.parse.quote(query)}"
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        n = int(resp.read().decode().strip())
+    print(f"Validation gold : {n} lignes dans gold.stack_test_daily_kpis")
+    if n <= 0:
+        raise RuntimeError("Table gold.stack_test_daily_kpis vide")
+    return n
