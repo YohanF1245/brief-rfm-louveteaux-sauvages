@@ -13,6 +13,7 @@ import pandas as pd
 from deltalake import write_deltalake
 
 DBT_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt"))
+DBT_RUNTIME_DIR = Path(os.environ.get("DBT_RUNTIME_DIR", "/opt/airflow/logs/dbt"))
 WCL_DBT_SILVER = "wcl_reports wcl_fights wcl_player_fight_metrics wcl_ingestion_state"
 WCL_DBT_GOLD = "wcl_boss_dps"
 BRONZE_DELTA_PATH = "s3://lake/bronze/stack_test/ventes"
@@ -72,7 +73,24 @@ def ingest_bronze_delta(**_) -> int:
     return len(df)
 
 
+def _ensure_dbt_runtime_dirs() -> None:
+    """Répertoires dbt hors du projet monté (évite Permission denied sur dbt/logs)."""
+    for sub in ("", "target", "dbt_packages"):
+        path = DBT_RUNTIME_DIR if not sub else DBT_RUNTIME_DIR / sub
+        path.mkdir(parents=True, exist_ok=True)
+
+
+def _dbt_runtime_args() -> list[str]:
+    return [
+        "--log-path",
+        str(DBT_RUNTIME_DIR),
+        "--target-path",
+        str(DBT_RUNTIME_DIR / "target"),
+    ]
+
+
 def _dbt_base_cmd(*subcommand: str) -> list[str]:
+    _ensure_dbt_runtime_dirs()
     return [
         "dbt",
         *subcommand,
@@ -80,6 +98,22 @@ def _dbt_base_cmd(*subcommand: str) -> list[str]:
         str(DBT_DIR),
         "--profiles-dir",
         str(DBT_DIR),
+        *_dbt_runtime_args(),
+    ]
+
+
+def _dbt_deps_cmd() -> list[str]:
+    _ensure_dbt_runtime_dirs()
+    return [
+        "dbt",
+        "deps",
+        "--project-dir",
+        str(DBT_DIR),
+        "--profiles-dir",
+        str(DBT_DIR),
+        *_dbt_runtime_args(),
+        "--packages-install-path",
+        str(DBT_RUNTIME_DIR / "dbt_packages"),
     ]
 
 
@@ -138,7 +172,7 @@ def run_dbt(select: str, **_) -> None:
         _assert_wcl_models_on_disk()
 
     subprocess.run(
-        _dbt_base_cmd("deps"),
+        _dbt_deps_cmd(),
         check=False,
         env=dbt_env(),
         cwd=str(DBT_DIR),
