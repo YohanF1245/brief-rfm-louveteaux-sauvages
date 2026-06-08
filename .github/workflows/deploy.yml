@@ -60,5 +60,7 @@ jobs:
           MINIO_ROOT_USER=${{ secrets.MINIO_ROOT_USER }}
           MINIO_ROOT_PASSWORD=${{ secrets.MINIO_ROOT_PASSWORD }}
           MINIO_BROWSER_REDIRECT_URL=${{ secrets.MINIO_BROWSER_REDIRECT_URL }}
+          CLICKHOUSE_USER=${{ secrets.CLICKHOUSE_USER }}
+          CLICKHOUSE_PASSWORD=${{ secrets.CLICKHOUSE_PASSWORD }}
           EOF"
-          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "cd '${{ secrets.DEPLOY_PATH }}' && docker compose pull && docker compose build --pull dbt dbt-docs streamlit && docker compose up -d --remove-orphans && docker compose up -d --force-recreate nginx"
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "cd '${{ secrets.DEPLOY_PATH }}' && docker compose pull && docker compose build --pull dbt dbt-docs streamlit && docker compose up -d --remove-orphans && docker compose up -d --force-recreate nginx streamlit airflow-apiserver"
