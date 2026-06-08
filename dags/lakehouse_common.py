@@ -33,7 +33,10 @@ def dbt_env() -> dict[str, str]:
     env.setdefault("DBT_CLICKHOUSE_HOST", "clickhouse")
     env.setdefault("DBT_CLICKHOUSE_PORT", "8123")
     env.setdefault("DBT_CLICKHOUSE_USER", "default")
-    env.setdefault("DBT_CLICKHOUSE_PASSWORD", "")
+    env.setdefault(
+        "DBT_CLICKHOUSE_PASSWORD",
+        os.environ.get("DBT_CLICKHOUSE_PASSWORD") or os.environ.get("CLICKHOUSE_PASSWORD", ""),
+    )
     env.setdefault("MINIO_ROOT_USER", os.environ.get("AWS_ACCESS_KEY_ID", "minioadmin"))
     env.setdefault("MINIO_ROOT_PASSWORD", os.environ.get("AWS_SECRET_ACCESS_KEY", "minioadmin"))
     return env
