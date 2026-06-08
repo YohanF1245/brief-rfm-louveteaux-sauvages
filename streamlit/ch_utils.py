@@ -10,12 +10,17 @@ import urllib.request
 
 import pandas as pd
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 
 
 def _cfg(name: str, default: str = "") -> str:
-    if name in st.secrets:
+    env_val = os.getenv(name)
+    if env_val not in (None, ""):
+        return env_val
+    try:
         return str(st.secrets[name])
-    return os.getenv(name, default)
+    except (KeyError, StreamlitSecretNotFoundError):
+        return default
 
 
 def _esc(value: str) -> str:
