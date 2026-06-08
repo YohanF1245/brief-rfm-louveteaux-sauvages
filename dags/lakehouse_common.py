@@ -13,6 +13,8 @@ import pandas as pd
 from deltalake import write_deltalake
 
 DBT_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt"))
+WCL_DBT_SILVER = "wcl_reports wcl_fights wcl_player_fight_metrics wcl_ingestion_state"
+WCL_DBT_GOLD = "wcl_boss_dps"
 BRONZE_DELTA_PATH = "s3://lake/bronze/stack_test/ventes"
 DELTA_TABLE_URL = "http://minio:9000/lake/bronze/stack_test/ventes"
 
@@ -70,39 +72,78 @@ def ingest_bronze_delta(**_) -> int:
     return len(df)
 
 
-def run_dbt(select: str, **_) -> None:
-    """Lance dbt run dans le projet monté sur le worker Airflow."""
-    subprocess.run(
-        ["dbt", "deps", "--project-dir", str(DBT_DIR), "--profiles-dir", str(DBT_DIR)],
+def _dbt_base_cmd(*subcommand: str) -> list[str]:
+    return [
+        "dbt",
+        *subcommand,
+        "--project-dir",
+        str(DBT_DIR),
+        "--profiles-dir",
+        str(DBT_DIR),
+    ]
+
+
+def _dbt_ls(select: str) -> list[str]:
+    """Liste les nœuds dbt correspondant au sélecteur (vide = rien à exécuter)."""
+    result = subprocess.run(
+        _dbt_base_cmd("ls", "--select", select),
+        capture_output=True,
+        text=True,
         check=False,
         env=dbt_env(),
         cwd=str(DBT_DIR),
     )
-    cmd = [
-        "dbt",
-        "run",
-        "--project-dir",
-        str(DBT_DIR),
-        "--profiles-dir",
-        str(DBT_DIR),
-        "--select",
-        select,
-    ]
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"dbt ls échoué pour --select {select!r}:\n{result.stderr or result.stdout}"
+        )
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def run_dbt(select: str, **_) -> None:
+    """Lance dbt run dans le projet monté sur le worker Airflow."""
+    subprocess.run(
+        _dbt_base_cmd("deps"),
+        check=False,
+        env=dbt_env(),
+        cwd=str(DBT_DIR),
+    )
+    matched = _dbt_ls(select)
+    if not matched:
+        all_models = _dbt_ls("fqn:*")
+        raise RuntimeError(
+            f"Aucun modèle dbt pour --select {select!r}. "
+            f"Modèles visibles ({len(all_models)}) : {', '.join(all_models) or '(aucun)'}. "
+            f"Vérifier le déploiement de {DBT_DIR}/models/silver/wcl_*.sql sur le worker."
+        )
+    print(f"Modèles sélectionnés ({len(matched)}) : {', '.join(matched)}")
+    cmd = _dbt_base_cmd("run", "--select", select)
     print("Commande :", " ".join(cmd))
-    subprocess.run(cmd, check=True, env=dbt_env(), cwd=str(DBT_DIR))
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=dbt_env(),
+        cwd=str(DBT_DIR),
+    )
+    print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
+    if result.returncode != 0:
+        raise RuntimeError(f"dbt run échoué (code {result.returncode})")
+    if "Nothing to do" in result.stdout:
+        raise RuntimeError(
+            f"dbt run n'a rien exécuté pour --select {select!r} (Nothing to do)."
+        )
 
 
 def run_dbt_test(select: str, **_) -> None:
-    cmd = [
-        "dbt",
-        "test",
-        "--project-dir",
-        str(DBT_DIR),
-        "--profiles-dir",
-        str(DBT_DIR),
-        "--select",
-        select,
-    ]
+    matched = _dbt_ls(select)
+    if not matched:
+        print(f"Aucun test dbt pour --select {select!r}, skip.")
+        return
+    cmd = _dbt_base_cmd("test", "--select", select)
     subprocess.run(cmd, check=True, env=dbt_env(), cwd=str(DBT_DIR))
 
 
