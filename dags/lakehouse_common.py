@@ -86,7 +86,16 @@ def _dbt_base_cmd(*subcommand: str) -> list[str]:
 def _dbt_ls(select: str) -> list[str]:
     """Liste les nœuds dbt correspondant au sélecteur (vide = rien à exécuter)."""
     result = subprocess.run(
-        _dbt_base_cmd("ls", "--select", select),
+        _dbt_base_cmd(
+            "ls",
+            "--select",
+            select,
+            "--resource-type",
+            "model",
+            "--output",
+            "name",
+            "--quiet",
+        ),
         capture_output=True,
         text=True,
         check=False,
@@ -100,8 +109,34 @@ def _dbt_ls(select: str) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+def _assert_wcl_models_on_disk() -> None:
+    """Vérifie que les SQL WCL sont bien montés sur le worker (/opt/airflow/dbt)."""
+    expected = [
+        "wcl_reports.sql",
+        "wcl_fights.sql",
+        "wcl_player_fight_metrics.sql",
+        "wcl_ingestion_state.sql",
+    ]
+    silver_dir = DBT_DIR / "models" / "silver"
+    gold_file = DBT_DIR / "models" / "gold" / "wcl_boss_dps.sql"
+    present = sorted(p.name for p in silver_dir.glob("wcl_*.sql")) if silver_dir.is_dir() else []
+    missing = [name for name in expected if name not in present]
+    if missing or not gold_file.is_file():
+        raise RuntimeError(
+            "Modèles dbt WCL absents sur le worker Airflow. "
+            f"Présents dans {silver_dir}: {present or '(aucun)'}. "
+            f"Manquants: {missing or '—'}. "
+            f"Gold wcl_boss_dps.sql: {'OK' if gold_file.is_file() else 'ABSENT'}. "
+            "Déployer le repo (merge develop → deploy-prod + workflow GitHub) "
+            "ou copier dbt/models/{silver,gold}/wcl_*.sql sur le serveur."
+        )
+
+
 def run_dbt(select: str, **_) -> None:
     """Lance dbt run dans le projet monté sur le worker Airflow."""
+    if "wcl_" in select:
+        _assert_wcl_models_on_disk()
+
     subprocess.run(
         _dbt_base_cmd("deps"),
         check=False,
@@ -110,23 +145,21 @@ def run_dbt(select: str, **_) -> None:
     )
     matched = _dbt_ls(select)
     if not matched:
-        all_models = subprocess.run(
-            _dbt_base_cmd("ls", "--resource-type", "model"),
+        listed = subprocess.run(
+            _dbt_base_cmd("ls", "--resource-type", "model", "--output", "name", "--quiet"),
             capture_output=True,
             text=True,
             check=False,
             env=dbt_env(),
             cwd=str(DBT_DIR),
         )
-        visible = [
-            line.strip()
-            for line in (all_models.stdout or "").splitlines()
-            if line.strip()
+        model_names = [
+            line.strip() for line in (listed.stdout or "").splitlines() if line.strip()
         ]
         raise RuntimeError(
             f"Aucun modèle dbt pour --select {select!r}. "
-            f"Modèles visibles ({len(visible)}) : {', '.join(visible) or '(aucun)'}. "
-            f"Vérifier le déploiement de {DBT_DIR}/models/silver/wcl_*.sql sur le worker."
+            f"Modèles visibles ({len(model_names)}) : {', '.join(model_names) or '(aucun)'}. "
+            f"Vérifier {DBT_DIR}/models/ sur le worker."
         )
     print(f"Modèles sélectionnés ({len(matched)}) : {', '.join(matched)}")
     cmd = _dbt_base_cmd("run", "--select", select)
