@@ -18,13 +18,29 @@ x-airflow-common:
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-airflow_jwt_secret}
     AIRFLOW__API_AUTH__JWT_ISSUER: ${AIRFLOW__API_AUTH__JWT_ISSUER:-airflow}
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
-    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-openpyxl requests beautifulsoup4}
+    AIRFLOW__WEBSERVER__BASE_URL: ${AIRFLOW_WEBSERVER_BASE_URL:-http://localhost:8080}
+    AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "true"
+    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    AWS_ENDPOINT_URL: http://minio:9000
+    AWS_DEFAULT_REGION: us-east-1
+    MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+    MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    DBT_PROJECT_DIR: /opt/airflow/dbt
+    DBT_PROFILES_DIR: /opt/airflow/dbt
+    DBT_CLICKHOUSE_HOST: clickhouse
+    DBT_CLICKHOUSE_PORT: "8123"
+    DBT_CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+    DBT_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse}
+    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-openpyxl requests beautifulsoup4 deltalake pyarrow s3fs dbt-core>=1.9,<2 dbt-clickhouse>=1.8,<2}
     AIRFLOW_CONFIG: "/opt/airflow/config/airflow.cfg"
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    - ${AIRFLOW_PROJ_DIR:-.}/dbt:/opt/airflow/dbt
+    - lake-data:/opt/airflow/lake
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -68,6 +84,86 @@ services:
       start_period: 5s
     restart: always
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ${AIRFLOW_PROJ_DIR:-.}/clickhouse/config.d:/etc/clickhouse-server/config.d:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8123/ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: always
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: always
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
+      mc mb local/lake --ignore-existing
+      "
+    restart: "no"
+
+  dbt:
+    build:
+      context: ./dbt
+    environment:
+      DBT_CLICKHOUSE_HOST: clickhouse
+      DBT_CLICKHOUSE_PORT: "8123"
+      DBT_CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      DBT_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse}
+      DBT_POSTGRES_HOST: postgres-db
+      DBT_POSTGRES_PORT: "5432"
+      DBT_POSTGRES_USER: ${APP_DB_USER}
+      DBT_POSTGRES_PASSWORD: ${APP_DB_PASSWORD}
+      DBT_POSTGRES_DB: ${APP_DB_NAME}
+    volumes:
+      - ${AIRFLOW_PROJ_DIR:-.}/dbt:/usr/app
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      postgres-db:
+        condition: service_healthy
+    restart: unless-stopped
+
   redis:
     image: redis:7.2-bookworm
     expose:
@@ -100,9 +196,23 @@ services:
   streamlit:
     build:
       context: ./streamlit
-    command: ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    env_file:
+      - ${ENV_FILE_PATH:-.env.dev}
+    command:
+      - streamlit
+      - run
+      - app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.fileWatcherType=poll
+    environment:
+      STREAMLIT_SERVER_FILE_WATCHER_TYPE: poll
+      STREAMLIT_SERVER_RUN_ON_SAVE: "true"
     ports:
       - "${STREAMLIT_PUBLIC_PORT:-8501}:8501"
+    volumes:
+      - ${AIRFLOW_PROJ_DIR:-.}/streamlit:/app
+      - ${AIRFLOW_PROJ_DIR:-.}/streamlit/.streamlit:/root/.streamlit:ro
     restart: always
 
   airflow-scheduler:
@@ -191,3 +301,6 @@ services:
 volumes:
   postgres-db-volume:
   app-postgres-db-volume:
+  clickhouse-data:
+  minio-data:
+  lake-data:
