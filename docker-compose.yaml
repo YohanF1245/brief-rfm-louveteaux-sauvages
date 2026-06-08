@@ -86,6 +86,8 @@ x-airflow-common:
     DBT_PROFILES_DIR: /opt/airflow/dbt
     DBT_CLICKHOUSE_HOST: clickhouse
     DBT_CLICKHOUSE_PORT: "8123"
+    DBT_CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+    DBT_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
     # WARNING: Use _PIP_ADDITIONAL_REQUIREMENTS option ONLY for a quick checks
     # for other purpose (development, test and especially production usage) build/extend Airflow image.
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-deltalake pyarrow s3fs dbt-core>=1.9,<2 dbt-clickhouse>=1.8,<2}
