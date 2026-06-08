@@ -96,6 +96,18 @@ query ReportFights($code: String!) {
       title
       startTime
       endTime
+      owner {
+        id
+        name
+      }
+      zone {
+        id
+        name
+      }
+      guild {
+        id
+        name
+      }
       fights {
         id
         encounterID
@@ -114,45 +126,56 @@ query ReportFights($code: String!) {
 }
 """
 
-FIGHT_TABLES_QUERY = """
-query FightTables(
+# Tous les TableDataType WCL v2 (https://www.warcraftlogs.com/v2-api-docs/warcraft/tabledatatype.doc.html)
+WCL_TABLE_DATA_TYPES: tuple[str, ...] = (
+    "Summary",
+    "Buffs",
+    "Casts",
+    "DamageDone",
+    "DamageTaken",
+    "Deaths",
+    "Debuffs",
+    "Dispels",
+    "Healing",
+    "Interrupts",
+    "Resources",
+    "Summons",
+    "Survivability",
+    "Threat",
+)
+
+# Alias rétrocompat (requêtes ClickHouse existantes)
+TABLE_METRIC_ALIASES: dict[str, str] = {
+    "DamageDone": "dps",
+    "Healing": "hps",
+    "DamageTaken": "dtps",
+    "Deaths": "deaths",
+    "Summary": "summary",
+    "Buffs": "buffs",
+    "Casts": "casts",
+    "Debuffs": "debuffs",
+    "Dispels": "dispels",
+    "Interrupts": "interrupts",
+    "Resources": "resources",
+    "Summons": "summons",
+    "Survivability": "survivability",
+    "Threat": "threat",
+}
+
+FIGHT_TABLE_QUERY = """
+query FightTable(
   $code: String!
   $startTime: Float!
   $endTime: Float!
+  $dataType: TableDataType!
 ) {
   reportData {
     report(code: $code) {
-      damage: table(
-        startTime: $startTime
-        endTime: $endTime
-        dataType: DamageDone
-      )
-      healing: table(
-        startTime: $startTime
-        endTime: $endTime
-        dataType: Healing
-      )
-      damageTaken: table(
-        startTime: $startTime
-        endTime: $endTime
-        dataType: DamageTaken
-      )
-      deaths: table(
-        startTime: $startTime
-        endTime: $endTime
-        dataType: Deaths
-      )
+      table(startTime: $startTime, endTime: $endTime, dataType: $dataType)
     }
   }
 }
 """
-
-TABLE_METRICS = {
-    "damage": "dps",
-    "healing": "hps",
-    "damageTaken": "dtps",
-    "deaths": "deaths",
-}
 
 _token_cache: dict[str, Any] = {}
 
@@ -318,8 +341,22 @@ def _table_entries_block(table_data: Any) -> dict[str, Any]:
     return payload
 
 
+def metric_slug_for_data_type(data_type: str) -> str:
+    return TABLE_METRIC_ALIASES.get(data_type, data_type.lower())
+
+
+def _entry_label(entry: dict[str, Any]) -> str:
+    for key in ("name", "abilityName", "targetName"):
+        value = entry.get(key)
+        if value:
+            return str(value)
+    if entry.get("id") is not None:
+        return str(entry["id"])
+    return "unknown"
+
+
 def parse_table_entries(table_data: Any, metric: str) -> list[dict[str, Any]]:
-    """Extrait les stats joueur depuis la réponse ``table`` WCL."""
+    """Extrait les lignes depuis la réponse ``table`` WCL (entrée complète dans ``extra``)."""
     block = _table_entries_block(table_data)
     entries = block.get("entries") or []
     total_time = int(block.get("totalTime") or 0)
@@ -327,12 +364,12 @@ def parse_table_entries(table_data: Any, metric: str) -> list[dict[str, Any]]:
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        total = int(entry.get("total") or 0)
-        active = int(entry.get("activeTime") or total_time or 0)
+        total = int(entry.get("total") or entry.get("amount") or entry.get("count") or 0)
+        active = int(entry.get("activeTime") or entry.get("totalUptime") or total_time or 0)
         rate = (total / active * 1000.0) if active > 0 else 0.0
         rows.append(
             {
-                "player_name": entry.get("name") or "unknown",
+                "player_name": _entry_label(entry),
                 "player_id": entry.get("id"),
                 "class_name": entry.get("type"),
                 "spec_name": entry.get("spec"),
@@ -340,11 +377,7 @@ def parse_table_entries(table_data: Any, metric: str) -> list[dict[str, Any]]:
                 "total_amount": total,
                 "active_time_ms": active,
                 "rate_per_sec": rate,
-                "extra": {
-                    "guild": entry.get("guild"),
-                    "item_level": entry.get("itemLevel"),
-                    "talents": entry.get("talents"),
-                },
+                "extra": dict(entry),
             }
         )
     return rows
@@ -543,28 +576,46 @@ def fetch_report_fights(report_code: str) -> dict[str, Any]:
     return report
 
 
-def fetch_fight_tables(
+def fetch_fight_table_raw(
     report_code: str,
     start_time_ms: int,
     end_time_ms: int,
-) -> dict[str, list[dict[str, Any]]]:
-    """Stats agrégées DPS/HPS/DTPS/morts pour une plage de combat."""
+    data_type: str,
+) -> Any:
+    """Une table WCL brute pour une plage de combat et un ``TableDataType``."""
     if start_time_ms >= end_time_ms:
-        return {}
+        return None
     _throttle()
     data = graphql_request(
-        FIGHT_TABLES_QUERY,
+        FIGHT_TABLE_QUERY,
         {
             "code": report_code,
             "startTime": float(start_time_ms),
             "endTime": float(end_time_ms),
+            "dataType": data_type,
         },
     )
     report = (data.get("reportData") or {}).get("report") or {}
+    return report.get("table")
+
+
+def fetch_fight_tables(
+    report_code: str,
+    start_time_ms: int,
+    end_time_ms: int,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
+    """Toutes les tables WCL pour un combat : lignes parsées + JSON brut par dataType."""
+    if start_time_ms >= end_time_ms:
+        return {}, {}
+
     parsed: dict[str, list[dict[str, Any]]] = {}
-    for field, metric in TABLE_METRICS.items():
-        parsed[metric] = parse_table_entries(report.get(field), metric)
-    return parsed
+    raw_by_type: dict[str, Any] = {}
+    for data_type in WCL_TABLE_DATA_TYPES:
+        metric = metric_slug_for_data_type(data_type)
+        table_data = fetch_fight_table_raw(report_code, start_time_ms, end_time_ms, data_type)
+        raw_by_type[data_type] = table_data
+        parsed[metric] = parse_table_entries(table_data, metric)
+    return parsed, raw_by_type
 
 
 def fight_rows_from_report(report_code: str, report: dict[str, Any]) -> list[dict[str, Any]]:
