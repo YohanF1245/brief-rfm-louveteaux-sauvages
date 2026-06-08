@@ -33,13 +33,17 @@ def _get_credentials() -> dict:
             "password": conn.password,
         }
     except Exception:
-        log.debug("Fallback → credentials depuis .env")
+        log.debug("Fallback → credentials depuis .env (POSTGRES_* ou APP_DB_* dev)")
         return {
-            "host"    : os.getenv("POSTGRES_HOST",     "localhost"),
-            "port"    : int(os.getenv("POSTGRES_PORT", "5432")),
-            "dbname"  : os.getenv("POSTGRES_DB",       "rfm_db"),
-            "user"    : os.getenv("POSTGRES_USER",     "postgres"),
-            "password": os.getenv("POSTGRES_PASSWORD", "postgres"),
+            "host": os.getenv("POSTGRES_HOST", "localhost"),
+            "port": int(
+                os.getenv("POSTGRES_PORT", os.getenv("APP_DB_PUBLIC_PORT", "5433"))
+            ),
+            "dbname": os.getenv("POSTGRES_DB", os.getenv("APP_DB_NAME", "rfm")),
+            "user": os.getenv("POSTGRES_USER", os.getenv("APP_DB_USER", "rfm")),
+            "password": os.getenv(
+                "POSTGRES_PASSWORD", os.getenv("APP_DB_PASSWORD", "rfm")
+            ),
         }
 
 
@@ -92,6 +96,32 @@ def get_engine():
     c = _get_credentials()
     url = f"postgresql+psycopg2://{c['user']}:{c['password']}@{c['host']}:{c['port']}/{c['dbname']}"
     return create_engine(url)
+
+
+def log_connection_target(conn_id: str = CONN_ID) -> dict:
+    """Log les paramètres de connexion (sans mot de passe) pour debug dev."""
+    creds = _get_credentials()
+    source = "airflow" if _credentials_from_airflow() else "env"
+    log.info(
+        "Postgres [%s] | host=%s port=%s database=%s user=%s (source=%s)",
+        conn_id,
+        creds["host"],
+        creds["port"],
+        creds["dbname"],
+        creds["user"],
+        source,
+    )
+    return creds
+
+
+def _credentials_from_airflow() -> bool:
+    try:
+        from airflow.hooks.base import BaseHook
+
+        BaseHook.get_connection(CONN_ID)
+        return True
+    except Exception:
+        return False
 
 
 def execute_query(conn, query: str, params=None):
