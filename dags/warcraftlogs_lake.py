@@ -16,6 +16,7 @@ BRONZE_PATHS = {
     "guild_reports": f"{BRONZE_BASE}/guild_reports",
     "fights": f"{BRONZE_BASE}/fights",
     "fight_player_stats": f"{BRONZE_BASE}/fight_player_stats",
+    "fight_tables_raw": f"{BRONZE_BASE}/fight_tables_raw",
     "reports_raw": f"{BRONZE_BASE}/reports_raw",
     "ingestion_state": f"{BRONZE_BASE}/ingestion_state",
 }
@@ -62,8 +63,14 @@ def read_delta_df(path: str) -> pd.DataFrame:
     return DeltaTable(path, storage_options=storage).to_pandas()
 
 
-def replace_report_in_bronze(path: str, df: pd.DataFrame, report_code: str) -> int:
-    """Remplace les lignes d'un report dans une table Delta (delete + append)."""
+def replace_report_in_bronze(
+    path: str,
+    df: pd.DataFrame,
+    report_code: str,
+    *,
+    fight_id: int | None = None,
+) -> int:
+    """Remplace les lignes d'un report (ou report+fight) dans une table Delta."""
     if df.empty:
         return 0
 
@@ -73,7 +80,10 @@ def replace_report_in_bronze(path: str, df: pd.DataFrame, report_code: str) -> i
 
     if _delta_table_exists(path):
         dt = DeltaTable(path, storage_options=storage)
-        dt.delete(f"report_code = '{safe_code}'")
+        if fight_id is not None:
+            dt.delete(f"report_code = '{safe_code}' AND fight_id = {int(fight_id)}")
+        else:
+            dt.delete(f"report_code = '{safe_code}'")
 
     mode = "append" if _delta_table_exists(path) else "overwrite"
     write_deltalake(
@@ -215,6 +225,33 @@ def export_report_raw_to_bronze(report_code: str, raw_payload: dict[str, Any]) -
         ]
     )
     return replace_report_in_bronze(BRONZE_PATHS["reports_raw"], row, report_code)
+
+
+def export_fight_tables_raw_to_bronze(
+    report_code: str,
+    fight_id: int,
+    raw_by_type: dict[str, Any],
+) -> int:
+    """Bronze JSON brut : toutes les tables API par fight et TableDataType."""
+    rows = []
+    for data_type, payload in raw_by_type.items():
+        rows.append(
+            {
+                "report_code": report_code,
+                "fight_id": fight_id,
+                "data_type": data_type,
+                "raw_json": json.dumps(payload, ensure_ascii=False),
+                "fetched_at": pd.Timestamp.utcnow(),
+            }
+        )
+    if not rows:
+        return 0
+    return replace_report_in_bronze(
+        BRONZE_PATHS["fight_tables_raw"],
+        pd.DataFrame(rows),
+        report_code,
+        fight_id=fight_id,
+    )
 
 
 def export_report_tables_to_bronze(
