@@ -208,11 +208,18 @@ services:
     environment:
       STREAMLIT_SERVER_FILE_WATCHER_TYPE: poll
       STREAMLIT_SERVER_RUN_ON_SAVE: "true"
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse}
     ports:
       - "${STREAMLIT_PUBLIC_PORT:-8501}:8501"
     volumes:
       - ${AIRFLOW_PROJ_DIR:-.}/streamlit:/app
       - ${AIRFLOW_PROJ_DIR:-.}/streamlit/.streamlit:/root/.streamlit:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
     restart: always
 
   airflow-scheduler:
