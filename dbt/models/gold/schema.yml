@@ -13,3 +13,15 @@ models:
       - name: total_revenue
         description: "Chiffre d'affaires du jour/région"
         tests: [not_null]
+
+  - name: wcl_boss_dps
+    description: "DPS boss par joueur — couche gold Warcraft Logs pour Play / Power BI."
+    columns:
+      - name: report_code
+        tests: [not_null]
+      - name: fight_id
+        tests: [not_null]
+      - name: player_name
+        tests: [not_null]
+      - name: dps
+        tests: [not_null]
