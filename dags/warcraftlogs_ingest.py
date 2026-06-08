@@ -17,6 +17,7 @@ from warcraftlogs_common import (
     guild_url_from_env,
 )
 from warcraftlogs_lake import (
+    export_fight_tables_raw_to_bronze,
     export_report_raw_to_bronze,
     export_report_tables_to_bronze,
     list_pending_report_codes,
@@ -96,7 +97,8 @@ def _ingest_single_report(report_code: str) -> dict[str, int]:
         if start_ms is None or end_ms is None or int(start_ms) >= int(end_ms):
             continue
 
-        metrics = fetch_fight_tables(report_code, int(start_ms), int(end_ms))
+        metrics, raw_tables = fetch_fight_tables(report_code, int(start_ms), int(end_ms))
+        export_fight_tables_raw_to_bronze(report_code, int(fight["fight_id"]), raw_tables)
         for metric_rows in metrics.values():
             for row in metric_rows:
                 stat_rows.append(
@@ -120,11 +122,19 @@ def _ingest_single_report(report_code: str) -> dict[str, int]:
             [report_catalog_row(catalog["report"], catalog["guild"], catalog["keys"])]
         )
     else:
+        owner = (api_report.get("owner") or {}) if isinstance(api_report.get("owner"), dict) else {}
+        zone = (api_report.get("zone") or {}) if isinstance(api_report.get("zone"), dict) else {}
+        guild = (api_report.get("guild") or {}) if isinstance(api_report.get("guild"), dict) else {}
         reports_df = pd.DataFrame(
             [
                 {
                     "report_code": report_code,
+                    "guild_id": guild.get("id"),
+                    "guild_name": guild.get("name"),
                     "title": api_report.get("title"),
+                    "zone_name": zone.get("name"),
+                    "owner_name": owner.get("name"),
+                    "owner_user_id": owner.get("id"),
                     "start_time_ms": api_report.get("startTime"),
                     "end_time_ms": api_report.get("endTime"),
                     "fetched_at": pd.Timestamp.utcnow(),
