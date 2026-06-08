@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: stack_test_daily_kpis
+    description: "KPIs journaliers par région — couche gold pour Power BI."
+    columns:
+      - name: event_date
+        description: "Jour calendaire"
+        tests: [not_null]
+      - name: region
+        description: "Région commerciale"
+        tests: [not_null]
+      - name: total_revenue
+        description: "Chiffre d'affaires du jour/région"
+        tests: [not_null]

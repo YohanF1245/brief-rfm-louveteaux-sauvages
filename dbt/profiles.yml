@@ -1,0 +1,21 @@
+rfm_lakehouse:
+  target: dev
+  outputs:
+    dev:
+      type: clickhouse
+      schema: gold
+      host: "{{ env_var('DBT_CLICKHOUSE_HOST', 'clickhouse') }}"
+      port: "{{ env_var('DBT_CLICKHOUSE_PORT', '8123') | int }}"
+      user: "{{ env_var('DBT_CLICKHOUSE_USER', 'default') }}"
+      password: "{{ env_var('DBT_CLICKHOUSE_PASSWORD', '') }}"
+      secure: false
+      verify: false
+    postgres:
+      type: postgres
+      host: "{{ env_var('DBT_POSTGRES_HOST', 'postgres-db') }}"
+      port: "{{ env_var('DBT_POSTGRES_PORT', '5432') | int }}"
+      user: "{{ env_var('DBT_POSTGRES_USER', 'rfm') }}"
+      password: "{{ env_var('DBT_POSTGRES_PASSWORD', 'rfm') }}"
+      dbname: "{{ env_var('DBT_POSTGRES_DB', 'rfm') }}"
+      schema: public
+      threads: 4

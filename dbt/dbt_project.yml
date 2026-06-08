@@ -1,0 +1,19 @@
+name: rfm_lakehouse
+version: 1.0.0
+config-version: 2
+profile: rfm_lakehouse
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+
+models:
+  rfm_lakehouse:
+    silver:
+      +materialized: table
+      +schema: silver
+    gold:
+      +materialized: table
+      +schema: gold
