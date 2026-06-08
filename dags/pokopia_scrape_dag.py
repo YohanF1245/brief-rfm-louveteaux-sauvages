@@ -39,6 +39,7 @@ from pendulum import datetime
 def pokopia_scrape_dag():
     @task()
     def scrape_load_and_export() -> dict:
+        import logging
         from pathlib import Path
 
         from pokopia_db import refresh_pokopia_tables
@@ -50,10 +51,16 @@ def pokopia_scrape_dag():
         )
 
         limit = int(Variable.get("POKOPIA_SCRAPE_LIMIT", default_var="0"))
-        items_only = Variable.get("POKOPIA_ITEMS_ONLY", default_var="false").lower() in (
+        items_only_raw = Variable.get("POKOPIA_ITEMS_ONLY", default_var="false")
+        items_only = items_only_raw.strip().lower() in (
             "1",
             "true",
             "yes",
+        )
+        logging.getLogger(__name__).info(
+            "POKOPIA_ITEMS_ONLY=%r -> items_only=%s",
+            items_only_raw,
+            items_only,
         )
         if items_only:
             tables = build_item_tables_from_csv(resolve_items_csv())
@@ -67,11 +74,17 @@ def pokopia_scrape_dag():
         )
 
         paths: list[str] = []
-        if Variable.get("POKOPIA_WRITE_STAGING", default_var="false").lower() in (
+        write_staging = (
+            Variable.get("POKOPIA_WRITE_STAGING", default_var="false")
+            .strip()
+            .lower()
+            in (
             "1",
             "true",
             "yes",
-        ):
+            )
+        )
+        if write_staging:
             root = Path(__file__).resolve().parent / "data" / "pokemon_pokopia" / "staging"
             day = pendulum.now("UTC").format("YYYY-MM-DD")
             paths = write_tables_to_staging(tables, root / day)
