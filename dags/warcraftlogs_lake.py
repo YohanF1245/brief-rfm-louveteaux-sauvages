@@ -1,4 +1,4 @@
-"""Export bronze Warcraft Logs vers Delta MinIO (incrémental par report)."""
+"""Bronze Warcraft Logs : Delta MinIO uniquement (pas de staging Postgres)."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ BRONZE_PATHS = {
     "fights": f"{BRONZE_BASE}/fights",
     "fight_player_stats": f"{BRONZE_BASE}/fight_player_stats",
     "reports_raw": f"{BRONZE_BASE}/reports_raw",
+    "ingestion_state": f"{BRONZE_BASE}/ingestion_state",
 }
 
 
@@ -54,6 +55,13 @@ def _delta_table_exists(path: str) -> bool:
         return False
 
 
+def read_delta_df(path: str) -> pd.DataFrame:
+    if not _delta_table_exists(path):
+        return pd.DataFrame()
+    storage = s3_storage_options()
+    return DeltaTable(path, storage_options=storage).to_pandas()
+
+
 def replace_report_in_bronze(path: str, df: pd.DataFrame, report_code: str) -> int:
     """Remplace les lignes d'un report dans une table Delta (delete + append)."""
     if df.empty:
@@ -78,8 +86,125 @@ def replace_report_in_bronze(path: str, df: pd.DataFrame, report_code: str) -> i
     return len(prepared)
 
 
+def report_catalog_row(
+    report: dict[str, Any],
+    guild: dict[str, Any],
+    keys: dict[str, Any],
+) -> dict[str, Any]:
+    zone = (report.get("zone") or {}) if isinstance(report.get("zone"), dict) else {}
+    owner = (report.get("owner") or {}) if isinstance(report.get("owner"), dict) else {}
+    report_guild = (report.get("guild") or {}) if isinstance(report.get("guild"), dict) else {}
+    return {
+        "report_code": report.get("code"),
+        "guild_id": report_guild.get("id") or guild.get("id"),
+        "guild_name": report_guild.get("name") or guild.get("name"),
+        "server_region": keys["server_region"],
+        "server_slug": keys["server_slug"],
+        "title": report.get("title"),
+        "zone_name": zone.get("name"),
+        "owner_name": owner.get("name"),
+        "owner_user_id": report.get("_owner_user_id") or owner.get("id"),
+        "log_source": report.get("_log_source") or "guild",
+        "visibility": report.get("visibility"),
+        "start_time_ms": report.get("startTime"),
+        "end_time_ms": report.get("endTime"),
+        "fetched_at": pd.Timestamp.utcnow(),
+    }
+
+
+def upsert_catalog_state(
+    report: dict[str, Any],
+    guild: dict[str, Any],
+    keys: dict[str, Any],
+) -> None:
+    """Catalogue API → Delta ingestion_state (pending si pas déjà ok)."""
+    code = report.get("code")
+    if not code:
+        return
+
+    existing = read_delta_df(BRONZE_PATHS["ingestion_state"])
+    if not existing.empty:
+        match = existing[existing["report_code"] == code]
+        if not match.empty and str(match.iloc[0].get("status", "")) == "ok":
+            return
+
+    attempts = 0
+    if not existing.empty:
+        match = existing[existing["report_code"] == code]
+        if not match.empty:
+            attempts = int(match.iloc[0].get("ingestion_attempts") or 0)
+
+    row = pd.DataFrame(
+        [
+            {
+                "report_code": code,
+                "status": "pending",
+                "title": report.get("title"),
+                "start_time_ms": report.get("startTime"),
+                "last_error": None,
+                "ingestion_attempts": attempts,
+                "synced_at": None,
+                "fetched_at": pd.Timestamp.utcnow(),
+                "catalog_json": json.dumps(
+                    {"report": report, "guild": guild, "keys": keys},
+                    ensure_ascii=False,
+                ),
+            }
+        ]
+    )
+    replace_report_in_bronze(BRONZE_PATHS["ingestion_state"], row, code)
+
+
+def list_pending_report_codes(limit: int | None = None) -> list[str]:
+    df = read_delta_df(BRONZE_PATHS["ingestion_state"])
+    if df.empty:
+        return []
+    pending = df[df["status"].isin(["pending", "error"])].copy()
+    pending = pending.sort_values("start_time_ms", ascending=False, na_position="last")
+    codes = pending["report_code"].dropna().astype(str).tolist()
+    if limit:
+        codes = codes[: int(limit)]
+    return codes
+
+
+def mark_ingestion_ok(report_code: str) -> None:
+    df = read_delta_df(BRONZE_PATHS["ingestion_state"])
+    if df.empty or report_code not in df["report_code"].values:
+        return
+    row = df[df["report_code"] == report_code].iloc[0].to_dict()
+    row["status"] = "ok"
+    row["last_error"] = None
+    row["synced_at"] = pd.Timestamp.utcnow()
+    row["fetched_at"] = pd.Timestamp.utcnow()
+    replace_report_in_bronze(BRONZE_PATHS["ingestion_state"], pd.DataFrame([row]), report_code)
+
+
+def mark_ingestion_error(report_code: str, error: str) -> None:
+    df = read_delta_df(BRONZE_PATHS["ingestion_state"])
+    if df.empty or report_code not in df["report_code"].values:
+        return
+    row = df[df["report_code"] == report_code].iloc[0].to_dict()
+    row["status"] = "error"
+    row["last_error"] = error[:2000]
+    row["ingestion_attempts"] = int(row.get("ingestion_attempts") or 0) + 1
+    row["fetched_at"] = pd.Timestamp.utcnow()
+    replace_report_in_bronze(BRONZE_PATHS["ingestion_state"], pd.DataFrame([row]), report_code)
+
+
+def load_catalog_context(report_code: str) -> dict[str, Any] | None:
+    df = read_delta_df(BRONZE_PATHS["ingestion_state"])
+    if df.empty:
+        return None
+    match = df[df["report_code"] == report_code]
+    if match.empty:
+        return None
+    raw = match.iloc[0].get("catalog_json")
+    if not raw:
+        return None
+    return json.loads(raw)
+
+
 def export_report_raw_to_bronze(report_code: str, raw_payload: dict[str, Any]) -> int:
-    """Bronze JSON brut : réponse API fights complète par report."""
     row = pd.DataFrame(
         [
             {
@@ -98,42 +223,11 @@ def export_report_tables_to_bronze(
     fights_df: pd.DataFrame,
     stats_df: pd.DataFrame,
 ) -> dict[str, int]:
-    """Écrit les 3 tables relationnelles bronze pour un seul report."""
     counts = {
         "guild_reports": replace_report_in_bronze(BRONZE_PATHS["guild_reports"], reports_df, report_code),
         "fights": replace_report_in_bronze(BRONZE_PATHS["fights"], fights_df, report_code),
-        "fight_player_stats": replace_report_in_bronze(BRONZE_PATHS["fight_player_stats"], stats_df, report_code),
+        "fight_player_stats": replace_report_in_bronze(
+            BRONZE_PATHS["fight_player_stats"], stats_df, report_code
+        ),
     }
     return counts
-
-
-def export_bronze_delta(**_) -> int:
-    """Compat : snapshot complet Postgres → Delta (overwrite). Préférer l'ingest incrémental."""
-    from airflow.providers.postgres.hooks.postgres import PostgresHook
-
-    from warcraftlogs_db import FULL_FIGHTS, FULL_PLAYER_STATS, FULL_REPORTS
-
-    hook = PostgresHook(postgres_conn_id="DATA-DB")
-    mapping = {
-        "guild_reports": FULL_REPORTS,
-        "fights": FULL_FIGHTS,
-        "fight_player_stats": FULL_PLAYER_STATS,
-    }
-    total = 0
-    for name, sql_table in mapping.items():
-        df = hook.get_pandas_df(f"SELECT * FROM {sql_table}")
-        path = BRONZE_PATHS[name]
-        if df.empty:
-            print(f"Bronze WCL {name} : Postgres vide, skip.")
-            continue
-        prepared = _prepare_delta_df(df)
-        write_deltalake(
-            path,
-            prepared,
-            mode="overwrite",
-            schema_mode="overwrite",
-            storage_options=s3_storage_options(),
-        )
-        print(f"Bronze Delta snapshot : {path} ({len(prepared)} lignes)")
-        total += len(prepared)
-    return total
