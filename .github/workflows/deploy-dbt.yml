@@ -1,0 +1,56 @@
+name: deploy-dbt-only
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - "dbt/**"
+  workflow_dispatch:
+
+jobs:
+  deploy-dbt:
+    name: Sync dbt project and refresh containers
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install deployment tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync openssh-client
+
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Ensure remote dbt directory exists
+        run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "mkdir -p '${{ secrets.DEPLOY_PATH }}/dbt'"
+
+      - name: Sync dbt project
+        run: |
+          rsync -az --delete \
+            ./dbt/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/dbt/"
+
+      - name: Verify WCL models on server
+        run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "test -f '${{ secrets.DEPLOY_PATH }}/dbt/models/silver/wcl_reports.sql' && \
+             test -f '${{ secrets.DEPLOY_PATH }}/dbt/models/gold/wcl_boss_dps.sql' && \
+             ls '${{ secrets.DEPLOY_PATH }}/dbt/models/silver/wcl_'*.sql"
+
+      - name: Refresh dbt containers and validate models
+        run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "cd '${{ secrets.DEPLOY_PATH }}' && \
+            docker compose build --pull dbt dbt-docs && \
+            docker compose up -d --force-recreate dbt dbt-docs && \
+            until docker compose exec -T clickhouse wget -q -O- http://localhost:8123/ping; do sleep 3; done && \
+            docker compose run --rm dbt dbt deps && \
+            docker compose run --rm dbt dbt ls --resource-type model --output name --quiet"
