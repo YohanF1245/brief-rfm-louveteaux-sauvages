@@ -55,5 +55,9 @@ jobs:
           _AIRFLOW_WWW_USER_PASSWORD=${{ secrets.AIRFLOW_WWW_USER_PASSWORD }}
           NGINX_PUBLIC_PORT=${{ secrets.NGINX_PUBLIC_PORT }}
           _PIP_ADDITIONAL_REQUIREMENTS=${{ secrets.PIP_ADDITIONAL_REQUIREMENTS }}
+          AIRFLOW_WEBSERVER_BASE_URL=${{ secrets.AIRFLOW_WEBSERVER_BASE_URL }}
+          MINIO_ROOT_USER=${{ secrets.MINIO_ROOT_USER }}
+          MINIO_ROOT_PASSWORD=${{ secrets.MINIO_ROOT_PASSWORD }}
+          MINIO_BROWSER_REDIRECT_URL=${{ secrets.MINIO_BROWSER_REDIRECT_URL }}
           EOF"
-          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "cd '${{ secrets.DEPLOY_PATH }}' && docker compose pull && docker compose up -d --remove-orphans"
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "cd '${{ secrets.DEPLOY_PATH }}' && docker compose pull && docker compose build --pull dbt dbt-docs streamlit && docker compose up -d --remove-orphans"
