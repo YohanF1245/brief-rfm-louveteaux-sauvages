@@ -110,10 +110,22 @@ def run_dbt(select: str, **_) -> None:
     )
     matched = _dbt_ls(select)
     if not matched:
-        all_models = _dbt_ls("fqn:*")
+        all_models = subprocess.run(
+            _dbt_base_cmd("ls", "--resource-type", "model"),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=dbt_env(),
+            cwd=str(DBT_DIR),
+        )
+        visible = [
+            line.strip()
+            for line in (all_models.stdout or "").splitlines()
+            if line.strip()
+        ]
         raise RuntimeError(
             f"Aucun modèle dbt pour --select {select!r}. "
-            f"Modèles visibles ({len(all_models)}) : {', '.join(all_models) or '(aucun)'}. "
+            f"Modèles visibles ({len(visible)}) : {', '.join(visible) or '(aucun)'}. "
             f"Vérifier le déploiement de {DBT_DIR}/models/silver/wcl_*.sql sur le worker."
         )
     print(f"Modèles sélectionnés ({len(matched)}) : {', '.join(matched)}")
