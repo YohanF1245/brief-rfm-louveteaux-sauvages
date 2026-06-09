@@ -13,6 +13,11 @@ Déclencher dbt manuellement après ingest (ex. 3 reports de test) :
 
 Roster guilde (``player_guid`` pour jointure logs) : DAG ``warcraftlogs_guild_roster`` (quotidien).
 
+Ré-ingest total (ex. buffs ``viewBy: Source``) :
+  1. ``python scripts/reset_wcl_ingestion.py`` (ou task équivalente) → repasse ``ok`` en ``pending``
+  2. Relancer ``warcraftlogs_guild_nightmares`` en boucle jusqu'à plus de pending (quota ~25/run)
+  3. ``warcraftlogs_lakehouse_dbt`` pour silver + gold
+
 Chemins bronze :
   - ``s3://lake/bronze/warcraftlogs/guild_reports``
   - ``s3://lake/bronze/warcraftlogs/fights``
