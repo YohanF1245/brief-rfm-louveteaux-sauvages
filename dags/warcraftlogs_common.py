@@ -177,7 +177,19 @@ query FightTable(
 }
 """
 
+RATE_LIMIT_QUERY = """
+query WclRateLimit {
+  rateLimitData {
+    limitPerHour
+    pointsSpentThisHour
+    pointsResetIn
+  }
+}
+"""
+
 _token_cache: dict[str, Any] = {}
+_rate_limit_cache: dict[str, Any] = {}
+_throttle_counter = 0
 
 
 def parse_guild_url(url: str) -> dict[str, str]:
@@ -219,11 +231,48 @@ def _parse_user_ids_csv(raw: str) -> list[int]:
 
 
 def api_sleep_seconds() -> float:
-    raw = _airflow_variable("wcl_api_sleep_seconds") or os.environ.get("WCL_API_SLEEP_SECONDS", "0.5")
+    raw = _airflow_variable("wcl_api_sleep_seconds") or os.environ.get("WCL_API_SLEEP_SECONDS", "0.2")
     try:
         return max(0.0, float(raw.strip()))
     except ValueError:
-        return 0.5
+        return 0.2
+
+
+def adaptive_rate_limit_enabled() -> bool:
+    raw = _airflow_variable("wcl_adaptive_rate_limit") or os.environ.get(
+        "WCL_ADAPTIVE_RATE_LIMIT", "true"
+    )
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def rate_limit_check_interval() -> int:
+    raw = _airflow_variable("wcl_rate_limit_check_interval") or os.environ.get(
+        "WCL_RATE_LIMIT_CHECK_INTERVAL", "10"
+    )
+    try:
+        return max(1, int(raw.strip()))
+    except ValueError:
+        return 10
+
+
+def points_per_report_estimate() -> int:
+    raw = _airflow_variable("wcl_points_per_report_estimate") or os.environ.get(
+        "WCL_POINTS_PER_REPORT_ESTIMATE", "3500"
+    )
+    try:
+        return max(200, int(raw.strip()))
+    except ValueError:
+        return 3500
+
+
+def points_per_request_estimate() -> int:
+    raw = _airflow_variable("wcl_points_per_request_estimate") or os.environ.get(
+        "WCL_POINTS_PER_REQUEST_ESTIMATE", "2"
+    )
+    try:
+        return max(1, int(raw.strip()))
+    except ValueError:
+        return 2
 
 
 def max_report_pages() -> int | None:
@@ -315,8 +364,101 @@ def graphql_request(query: str, variables: dict[str, Any] | None = None) -> dict
     return body.get("data") or {}
 
 
+def refresh_rate_limit_data(*, force: bool = False) -> dict[str, int] | None:
+    """Lit ``rateLimitData`` WCL (quota horaire en points)."""
+    now = time.time()
+    cached = _rate_limit_cache.get("data")
+    if (
+        not force
+        and isinstance(cached, dict)
+        and now - float(_rate_limit_cache.get("fetched_at", 0)) < 30.0
+    ):
+        return cached
+    try:
+        data = graphql_request(RATE_LIMIT_QUERY)
+        block = data.get("rateLimitData") or {}
+        parsed = {
+            "limitPerHour": int(block.get("limitPerHour") or 0),
+            "pointsSpentThisHour": int(block.get("pointsSpentThisHour") or 0),
+            "pointsResetIn": max(0, int(block.get("pointsResetIn") or 0)),
+        }
+        _rate_limit_cache["data"] = parsed
+        _rate_limit_cache["fetched_at"] = now
+        return parsed
+    except Exception as exc:
+        print(f"WCL rateLimitData indisponible : {exc}")
+        return cached if isinstance(cached, dict) else None
+
+
+def rate_limit_snapshot() -> dict[str, int] | None:
+    data = _rate_limit_cache.get("data")
+    return data if isinstance(data, dict) else None
+
+
+def cap_ingest_batch_size(requested: int) -> int:
+    """Réduit le batch si le quota horaire WCL ne suffit pas."""
+    if not adaptive_rate_limit_enabled():
+        return requested
+    snapshot = rate_limit_snapshot() or refresh_rate_limit_data(force=True)
+    if not snapshot:
+        return requested
+    limit_h = snapshot["limitPerHour"]
+    spent = snapshot["pointsSpentThisHour"]
+    if limit_h <= 0:
+        return requested
+    remaining = max(0, limit_h - spent)
+    usable = remaining * 0.85
+    est = points_per_report_estimate()
+    cap = int(usable // est)
+    effective = max(1, min(requested, cap)) if cap >= 1 else 1
+    if effective < requested:
+        print(
+            f"Batch WCL plafonné {requested} → {effective} "
+            f"(quota {spent}/{limit_h} pts, ~{est} pts/report)."
+        )
+    return effective
+
+
+def _adaptive_sleep_seconds() -> float | None:
+    if not adaptive_rate_limit_enabled():
+        return None
+    snapshot = rate_limit_snapshot()
+    if not snapshot:
+        return None
+    limit_h = snapshot["limitPerHour"]
+    spent = snapshot["pointsSpentThisHour"]
+    reset_in = max(1, snapshot["pointsResetIn"])
+    if limit_h <= 0:
+        return None
+    remaining = max(0, limit_h - spent)
+    if remaining <= 0:
+        return min(60.0, float(reset_in) / 5.0)
+    pts_budget = remaining * 0.85
+    pts_per_sec = pts_budget / float(reset_in)
+    pts_per_req = float(points_per_request_estimate())
+    req_per_sec = pts_per_sec / pts_per_req
+    if req_per_sec <= 0.05:
+        return min(60.0, float(reset_in) / 5.0)
+    sleep = 1.0 / req_per_sec
+    return max(0.12, min(sleep, 3.0))
+
+
+def _compute_sleep_seconds() -> float:
+    static = api_sleep_seconds()
+    adaptive = _adaptive_sleep_seconds()
+    if adaptive is None:
+        return static
+    if adaptive > static:
+        return adaptive
+    return min(static, adaptive) if static > 0 else adaptive
+
+
 def _throttle() -> None:
-    delay = api_sleep_seconds()
+    global _throttle_counter
+    _throttle_counter += 1
+    if adaptive_rate_limit_enabled() and _throttle_counter % rate_limit_check_interval() == 0:
+        refresh_rate_limit_data()
+    delay = _compute_sleep_seconds()
     if delay:
         time.sleep(delay)
 
