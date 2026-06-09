@@ -345,6 +345,48 @@ def mark_ingestion_error(report_code: str, error: str) -> None:
     replace_report_in_bronze(BRONZE_PATHS["ingestion_state"], pd.DataFrame([row]), report_code)
 
 
+def reset_ingestion_status_to_pending(
+    *,
+    from_statuses: tuple[str, ...] = ("ok", "error"),
+    report_codes: list[str] | None = None,
+) -> int:
+    """
+    Repasse des reports en ``pending`` pour forcer un ré-ingest API.
+
+    Par défaut : tous les ``ok`` et ``error``. Bronze existante écrasée report par report
+    à la prochaine ingestion (``replace_report_in_bronze``).
+    """
+    df = read_delta_df(BRONZE_PATHS["ingestion_state"])
+    if df.empty:
+        print("ingestion_state vide — rien à reset.")
+        return 0
+
+    mask = df["status"].astype(str).isin(from_statuses)
+    if report_codes:
+        wanted = {str(c).strip() for c in report_codes if str(c).strip()}
+        mask &= df["report_code"].astype(str).isin(wanted)
+
+    n = int(mask.sum())
+    if n == 0:
+        print("Aucun report à repasser en pending.")
+        return 0
+
+    df.loc[mask, "status"] = "pending"
+    df.loc[mask, "last_error"] = None
+    df.loc[mask, "synced_at"] = None
+    df.loc[mask, "fetched_at"] = pd.Timestamp.utcnow()
+
+    storage = s3_storage_options()
+    write_deltalake(
+        BRONZE_PATHS["ingestion_state"],
+        _prepare_delta_df(_ensure_ingestion_state_columns(df)),
+        mode="overwrite",
+        storage_options=storage,
+    )
+    print(f"ingestion_state : {n} report(s) repassé(s) en pending ({from_statuses}).")
+    return n
+
+
 def load_catalog_context(report_code: str) -> dict[str, Any] | None:
     df = read_delta_df(BRONZE_PATHS["ingestion_state"])
     if df.empty:
