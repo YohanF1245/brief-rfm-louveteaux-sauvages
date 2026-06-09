@@ -15,7 +15,7 @@ from deltalake import write_deltalake
 DBT_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt"))
 DBT_RUNTIME_DIR = Path(os.environ.get("DBT_RUNTIME_DIR", "/opt/airflow/logs/dbt"))
 WCL_DBT_SILVER = "wcl_reports wcl_fights wcl_player_fight_metrics wcl_ingestion_state"
-WCL_DBT_GOLD = "wcl_boss_dps wcl_player_dps_viz"
+WCL_DBT_GOLD = "wcl_boss_dps wcl_player_dps_viz wcl_raid_consumables_viz"
 BRONZE_DELTA_PATH = "s3://lake/bronze/stack_test/ventes"
 DELTA_TABLE_URL = "http://minio:9000/lake/bronze/stack_test/ventes"
 
@@ -153,7 +153,7 @@ def _assert_wcl_models_on_disk() -> None:
     ]
     silver_dir = DBT_DIR / "models" / "silver"
     gold_dir = DBT_DIR / "models" / "gold"
-    gold_expected = ["wcl_boss_dps.sql", "wcl_player_dps_viz.sql"]
+    gold_expected = ["wcl_boss_dps.sql", "wcl_player_dps_viz.sql", "wcl_raid_consumables_viz.sql"]
     present = sorted(p.name for p in silver_dir.glob("wcl_*.sql")) if silver_dir.is_dir() else []
     gold_present = sorted(p.name for p in gold_dir.glob("wcl_*.sql")) if gold_dir.is_dir() else []
     missing = [name for name in expected if name not in present]
