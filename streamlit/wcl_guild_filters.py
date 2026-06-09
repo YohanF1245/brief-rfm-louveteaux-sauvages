@@ -10,10 +10,20 @@ def guild_report_clause(guild_only: bool) -> str:
     return "is_nightmares_asylum = 1" if guild_only else "1 = 1"
 
 
+def guild_player_clause(guild_only: bool) -> str:
+    """
+    Restreint aux membres guilde (``is_guild_member`` en gold, jointure ``player_guid``).
+    Fallback roster dérivé si la colonne gold n'existe pas encore.
+    """
+    if not guild_only:
+        return "1 = 1"
+    return "is_guild_member = 1"
+
+
 def guild_member_subquery() -> str:
     """
-    Roster dérivé : persos vus dans au moins un log guilde officiel WCL.
-    Exclut les noms vides et ``unknown`` (buffs sans joueur).
+    Fallback legacy : roster dérivé des logs guilde officiels.
+    Utilisé si ``is_guild_member`` absent de la table gold (avant rebuild dbt).
     """
     return f"""
     SELECT DISTINCT m.player_name
@@ -25,10 +35,3 @@ def guild_member_subquery() -> str:
       AND m.player_name != ''
       AND lower(m.player_name) != 'unknown'
     """
-
-
-def guild_player_clause(guild_only: bool) -> str:
-    """Restreint aux membres du roster guilde quand la case est cochée."""
-    if not guild_only:
-        return "1 = 1"
-    return f"player_name IN ({guild_member_subquery()})"
