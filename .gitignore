@@ -41,6 +41,7 @@ Thumbs.db
 /pokemon/*
 /logs/pokopia_item_images_errors.log
 streamlit/.streamlit/secrets.toml
+streamlit/secrets.prod.toml
 
 # Certificats Let's Encrypt (générés sur le serveur, jamais versionnés)
 nginx/certbot/conf/
