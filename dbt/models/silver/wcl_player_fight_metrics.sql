@@ -15,6 +15,7 @@ SELECT
     player_name,
     metric,
     toInt64OrNull(toString(player_id)) AS player_id,
+    toUInt64OrNull(toString(JSONExtractUInt(extra, 'guid'))) AS player_guid,
     class_name,
     spec_name,
     toFloat64OrNull(toString(total_amount)) AS total_amount,
