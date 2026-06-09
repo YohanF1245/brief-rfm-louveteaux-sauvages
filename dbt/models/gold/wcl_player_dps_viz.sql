@@ -7,13 +7,14 @@
 /*
   Gold viz : DPS boss enrichi pour Power BI / Streamlit.
   Grain : joueur × fight × report.
-  Filtre guilde par défaut : is_nightmares_asylum = 1.
+  Filtre membre guilde : ``is_guild_member = 1`` (jointure ``player_guid`` ↔ roster API).
 */
 SELECT
     report_start_at,
     report_date,
     player_name,
-    guild_name,
+    report_guild_name AS guild_name,
+    player_guild_name,
     dps,
     class_name,
     spec_name,
@@ -33,7 +34,9 @@ SELECT
     ) AS difficulty_label,
     keystone_level,
     if(keystone_level > 0, 'Mythic+', 'Raid') AS content_type,
-    if(lower(coalesce(guild_name, '')) LIKE '%nightmares asylum%', 1, 0) AS is_nightmares_asylum,
+    if(lower(coalesce(report_guild_name, '')) LIKE '%nightmares asylum%', 1, 0) AS is_nightmares_asylum,
+    is_guild_member,
+    player_guid,
     outcome,
     duration_sec,
     raid_size,
