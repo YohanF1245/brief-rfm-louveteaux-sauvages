@@ -20,7 +20,12 @@ Chemins bronze :
 
 Airflow :
   - Connexion ``WCL_API`` (HTTP) : login = client_id, password = client_secret
-  - Variables : ``wcl_guild_url``, ``wcl_user_ids``, ``wcl_ingest_batch_size``, etc.
+  - Variables ingestion (prod) :
+    - ``wcl_dag_schedule`` : ``*/30 * * * *`` (défaut, toutes les 30 min)
+    - ``wcl_ingest_batch_size`` : ``25`` (plafonné auto via quota API)
+    - ``wcl_adaptive_rate_limit`` : ``true`` (lit ``rateLimitData`` WCL)
+    - ``wcl_api_sleep_seconds`` : ``0.2`` (plancher entre requêtes)
+    - ``wcl_points_per_report_estimate`` : ``3500`` (ajuster si 429 fréquents)
 
 MinIO / ClickHouse : réseau Docker + creds compose (pas de connexion Airflow).
 """
@@ -36,7 +41,7 @@ from airflow.sdk import Variable
 from lakehouse_common import WCL_DBT_GOLD, WCL_DBT_SILVER, run_dbt, run_dbt_test
 from warcraftlogs_ingest import ingest_reports_incremental, sync_report_catalog
 
-_DEFAULT_SCHEDULE = "0 */6 * * *"
+_DEFAULT_SCHEDULE = "*/30 * * * *"
 
 
 def _dag_schedule() -> str | None:

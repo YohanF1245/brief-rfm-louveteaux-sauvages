@@ -10,11 +10,13 @@ from typing import Any
 import pandas as pd
 
 from warcraftlogs_common import (
+    cap_ingest_batch_size,
     fetch_all_guild_and_member_reports,
     fetch_fight_tables,
     fetch_report_fights,
     fight_rows_from_report,
     guild_url_from_env,
+    refresh_rate_limit_data,
 )
 from warcraftlogs_lake import (
     bulk_upsert_catalog_state,
@@ -39,10 +41,10 @@ def _ingest_batch_size() -> int:
     try:
         from airflow.sdk import Variable
 
-        raw = str(Variable.get("wcl_ingest_batch_size", default="50")).strip()
+        raw = str(Variable.get("wcl_ingest_batch_size", default="25")).strip()
         return max(1, int(raw))
     except Exception:
-        return max(1, int(os.environ.get("WCL_INGEST_BATCH_SIZE", "50")))
+        return max(1, int(os.environ.get("WCL_INGEST_BATCH_SIZE", "25")))
 
 
 def sync_report_catalog(**_) -> int:
@@ -158,14 +160,23 @@ def _ingest_single_report(report_code: str) -> dict[str, int]:
 
 def ingest_reports_incremental(**_) -> int:
     """Ingère les reports pending/error depuis Delta state, un par un."""
-    batch_limit = _ingest_batch_size()
+    refresh_rate_limit_data(force=True)
+    requested = _ingest_batch_size()
+    batch_limit = cap_ingest_batch_size(requested)
     pending = list_pending_report_codes(limit=batch_limit)
     if not pending:
         print("Aucun report en attente dans le lake.")
         return 0
 
+    quota = refresh_rate_limit_data()
+    if quota:
+        print(
+            f"Quota WCL : {quota['pointsSpentThisHour']}/{quota['limitPerHour']} pts "
+            f"(reset dans {quota['pointsResetIn']} s)."
+        )
+
     processed = 0
-    print(f"{len(pending)} reports à ingérer (batch max {batch_limit}).")
+    print(f"{len(pending)} reports à ingérer (batch demandé {requested}, effectif {batch_limit}).")
     for report_code in pending:
         try:
             summary = _ingest_single_report(report_code)
@@ -175,6 +186,7 @@ def ingest_reports_incremental(**_) -> int:
             mark_ingestion_error(report_code, str(exc))
             print(f"ERREUR {report_code} : {exc}")
             if _is_rate_limit_error(exc):
+                refresh_rate_limit_data(force=True)
                 print("Quota / 4xx API — arrêt du batch (reports déjà OK conservés).")
                 break
 
