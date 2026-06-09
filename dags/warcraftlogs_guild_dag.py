@@ -1,14 +1,14 @@
 """
 Ingestion Warcraft Logs — guilde Nightmares Asylum (Dalaran EU).
 
-Flux lakehouse (sans Postgres) :
-  API WCL → bronze Delta (MinIO) → silver/gold dbt (ClickHouse)
+Flux API → bronze Delta (MinIO) uniquement.
+Transform bronze → ClickHouse : DAG séparé ``warcraftlogs_lakehouse_dbt``.
 
   1. ``sync_report_catalog`` — catalogue API → ``ingestion_state`` (Delta)
   2. ``ingest_reports_incremental`` — par report : fights + stats → bronze Delta
-  3. ``dbt_silver`` / ``dbt_gold`` — ``gold.wcl_boss_dps``, ``gold.wcl_player_dps_viz``, ``gold.wcl_raid_consumables_viz``
 
-Rafraîchir gold seul (sans API) : DAG ``warcraftlogs_lakehouse_dbt``.
+Déclencher dbt manuellement après ingest (ex. 3 reports de test) :
+  DAG ``warcraftlogs_lakehouse_dbt`` → Trigger → ``dbt_silver`` / ``dbt_gold``.
 
 Chemins bronze :
   - ``s3://lake/bronze/warcraftlogs/guild_reports``
@@ -21,11 +21,12 @@ Chemins bronze :
 Airflow :
   - Connexion ``WCL_API`` (HTTP) : login = client_id, password = client_secret
   - Variables ingestion (prod) :
-    - ``wcl_dag_schedule`` : ``*/30 * * * *`` (défaut, toutes les 30 min)
-    - ``wcl_ingest_batch_size`` : ``25`` (plafonné auto via quota API)
-    - ``wcl_adaptive_rate_limit`` : ``true`` (lit ``rateLimitData`` WCL)
-    - ``wcl_api_sleep_seconds`` : ``0.2`` (plancher entre requêtes)
-    - ``wcl_points_per_report_estimate`` : ``3500`` (ajuster si 429 fréquents)
+    - ``wcl_dag_schedule`` : ``*/30 * * * *`` (défaut)
+    - ``wcl_ingest_batch_size`` : ``25`` (max candidats/run, quota réel via API)
+    - ``wcl_adaptive_rate_limit`` : ``true``
+    - ``wcl_api_sleep_seconds`` : ``0.2``
+    - ``wcl_points_per_report_estimate`` : ``1000`` (fallback si pas encore de mesure)
+    - ``wcl_quota_reserve_fraction`` : ``0.05``
 
 MinIO / ClickHouse : réseau Docker + creds compose (pas de connexion Airflow).
 """
@@ -38,7 +39,6 @@ from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk import Variable
 
-from lakehouse_common import WCL_DBT_GOLD, WCL_DBT_SILVER, run_dbt, run_dbt_test
 from warcraftlogs_ingest import ingest_reports_incremental, sync_report_catalog
 
 _DEFAULT_SCHEDULE = "*/30 * * * *"
@@ -60,7 +60,7 @@ with DAG(
     schedule=_dag_schedule(),
     catchup=False,
     max_active_runs=1,
-    tags=["warcraftlogs", "ingest", "api", "raid", "lakehouse", "delta", "dbt", "bronze", "silver", "gold"],
+    tags=["warcraftlogs", "ingest", "api", "raid", "lakehouse", "delta", "bronze"],
     doc_md=__doc__,
 ) as dag:
     sync_catalog = PythonOperator(
@@ -71,20 +71,5 @@ with DAG(
         task_id="ingest_reports_incremental",
         python_callable=ingest_reports_incremental,
     )
-    dbt_silver = PythonOperator(
-        task_id="dbt_silver",
-        python_callable=run_dbt,
-        op_kwargs={"select": WCL_DBT_SILVER},
-    )
-    dbt_gold = PythonOperator(
-        task_id="dbt_gold",
-        python_callable=run_dbt,
-        op_kwargs={"select": WCL_DBT_GOLD},
-    )
-    dbt_test_gold = PythonOperator(
-        task_id="dbt_test_gold",
-        python_callable=run_dbt_test,
-        op_kwargs={"select": WCL_DBT_GOLD},
-    )
 
-    sync_catalog >> ingest_bronze >> dbt_silver >> dbt_gold >> dbt_test_gold
+    sync_catalog >> ingest_bronze
