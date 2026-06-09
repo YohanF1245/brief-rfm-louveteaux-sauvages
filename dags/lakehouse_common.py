@@ -194,6 +194,13 @@ def run_dbt(select: str, **_) -> None:
     """Lance dbt run dans le projet monté sur le worker Airflow."""
     if "wcl_" in select:
         _assert_wcl_models_on_disk()
+    if "wcl_ingestion_state" in select:
+        try:
+            from warcraftlogs_lake import repair_ingestion_state_schema
+
+            repair_ingestion_state_schema()
+        except Exception as exc:
+            print(f"repair_ingestion_state_schema ignoré : {exc}")
 
     _ensure_dbt_deps()
     matched = _dbt_ls(select)
