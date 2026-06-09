@@ -1,7 +1,8 @@
 {{ config(
     materialized='table',
     schema='gold',
-    tags=['warcraftlogs', 'gold', 'power_bi']
+    tags=['warcraftlogs', 'gold', 'power_bi'],
+    pre_hook="DROP TABLE IF EXISTS {{ this }}"
 ) }}
 
 /*
