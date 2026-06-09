@@ -6,7 +6,7 @@ Flux lakehouse (sans Postgres) :
 
   1. ``sync_report_catalog`` — catalogue API → ``ingestion_state`` (Delta)
   2. ``ingest_reports_incremental`` — par report : fights + stats → bronze Delta
-  3. ``dbt_silver`` / ``dbt_gold`` — tables ``silver.wcl_*``, ``gold.wcl_boss_dps``, ``gold.wcl_player_dps_viz``
+  3. ``dbt_silver`` / ``dbt_gold`` — ``gold.wcl_boss_dps``, ``gold.wcl_player_dps_viz``, ``gold.wcl_raid_consumables_viz``
 
 Rafraîchir gold seul (sans API) : DAG ``warcraftlogs_lakehouse_dbt``.
 
