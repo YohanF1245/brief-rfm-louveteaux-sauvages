@@ -6,7 +6,7 @@ L'ingestion API (300+ reports) reste dans ``warcraftlogs_guild_nightmares``.
 
 Chaîne :
   1. ``dbt_silver`` — ``silver.wcl_*`` depuis Delta (``deltaLake()``)
-  2. ``dbt_gold`` — ``gold.wcl_boss_dps``
+  2. ``dbt_gold`` — ``gold.wcl_boss_dps``, ``gold.wcl_player_dps_viz``
   3. ``dbt_test_gold`` — tests dbt
 
 Coups de gold seul : Trigger DAG puis lancer uniquement ``dbt_gold`` (silver déjà OK).
