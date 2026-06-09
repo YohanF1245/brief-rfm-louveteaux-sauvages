@@ -355,6 +355,43 @@ def _entry_label(entry: dict[str, Any]) -> str:
     return "unknown"
 
 
+def _stat_row_from_entry(
+    entry: dict[str, Any],
+    metric: str,
+    *,
+    player_name: str,
+    player_id: Any,
+    class_name: Any,
+    spec_name: Any,
+    total_time: int,
+) -> dict[str, Any]:
+    total = int(entry.get("total") or entry.get("amount") or entry.get("count") or 0)
+    active = int(
+        entry.get("activeTime")
+        or entry.get("totalUptime")
+        or entry.get("uptime")
+        or total
+        or total_time
+        or 0
+    )
+    rate = (total / active * 1000.0) if active > 0 else 0.0
+    extra = dict(entry)
+    extra.setdefault("playerName", player_name)
+    if player_id is not None:
+        extra.setdefault("playerId", player_id)
+    return {
+        "player_name": player_name,
+        "player_id": player_id,
+        "class_name": class_name,
+        "spec_name": spec_name,
+        "metric": metric,
+        "total_amount": total,
+        "active_time_ms": active,
+        "rate_per_sec": rate,
+        "extra": extra,
+    }
+
+
 def parse_table_entries(table_data: Any, metric: str) -> list[dict[str, Any]]:
     """Extrait les lignes depuis la réponse ``table`` WCL (entrée complète dans ``extra``)."""
     block = _table_entries_block(table_data)
@@ -364,21 +401,37 @@ def parse_table_entries(table_data: Any, metric: str) -> list[dict[str, Any]]:
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        total = int(entry.get("total") or entry.get("amount") or entry.get("count") or 0)
-        active = int(entry.get("activeTime") or entry.get("totalUptime") or total_time or 0)
-        rate = (total / active * 1000.0) if active > 0 else 0.0
+        subentries = entry.get("subentries") or entry.get("subEntries")
+        if subentries:
+            player_name = str(entry.get("name") or entry.get("playerName") or "unknown")
+            player_id = entry.get("id")
+            class_name = entry.get("type")
+            spec_name = entry.get("spec")
+            for sub in subentries:
+                if not isinstance(sub, dict):
+                    continue
+                rows.append(
+                    _stat_row_from_entry(
+                        sub,
+                        metric,
+                        player_name=player_name,
+                        player_id=player_id,
+                        class_name=class_name,
+                        spec_name=spec_name,
+                        total_time=total_time,
+                    )
+                )
+            continue
         rows.append(
-            {
-                "player_name": _entry_label(entry),
-                "player_id": entry.get("id"),
-                "class_name": entry.get("type"),
-                "spec_name": entry.get("spec"),
-                "metric": metric,
-                "total_amount": total,
-                "active_time_ms": active,
-                "rate_per_sec": rate,
-                "extra": dict(entry),
-            }
+            _stat_row_from_entry(
+                entry,
+                metric,
+                player_name=_entry_label(entry),
+                player_id=entry.get("id"),
+                class_name=entry.get("type"),
+                spec_name=entry.get("spec"),
+                total_time=total_time,
+            )
         )
     return rows
 
