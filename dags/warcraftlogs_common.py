@@ -256,13 +256,24 @@ def rate_limit_check_interval() -> int:
 
 
 def points_per_report_estimate() -> int:
+    """Fallback si aucun coût mesuré en bronze (voir ``median_ingest_points``)."""
     raw = _airflow_variable("wcl_points_per_report_estimate") or os.environ.get(
-        "WCL_POINTS_PER_REPORT_ESTIMATE", "3500"
+        "WCL_POINTS_PER_REPORT_ESTIMATE", "1000"
     )
     try:
         return max(200, int(raw.strip()))
     except ValueError:
-        return 3500
+        return 1000
+
+
+def quota_reserve_fraction() -> float:
+    raw = _airflow_variable("wcl_quota_reserve_fraction") or os.environ.get(
+        "WCL_QUOTA_RESERVE_FRACTION", "0.05"
+    )
+    try:
+        return max(0.0, min(0.5, float(raw.strip())))
+    except ValueError:
+        return 0.05
 
 
 def points_per_request_estimate() -> int:
@@ -395,28 +406,54 @@ def rate_limit_snapshot() -> dict[str, int] | None:
     return data if isinstance(data, dict) else None
 
 
-def cap_ingest_batch_size(requested: int) -> int:
-    """Réduit le batch si le quota horaire WCL ne suffit pas."""
+def estimated_report_cost() -> int:
+    """Coût estimé : médiane mesurée × 1,15 ou fallback variable."""
+    try:
+        from warcraftlogs_lake import median_ingest_points
+
+        measured = median_ingest_points()
+    except Exception:
+        measured = None
+    if measured and measured > 0:
+        return max(200, int(measured * 1.15))
+    return points_per_report_estimate()
+
+
+def quota_allows_next_report() -> tuple[bool, str]:
+    """Vérifie s'il reste assez de points pour tenter un report (arrêt propre sinon)."""
     if not adaptive_rate_limit_enabled():
-        return requested
+        return True, "throttle adaptatif désactivé"
     snapshot = rate_limit_snapshot() or refresh_rate_limit_data(force=True)
     if not snapshot:
-        return requested
+        return True, "quota API indisponible"
     limit_h = snapshot["limitPerHour"]
     spent = snapshot["pointsSpentThisHour"]
+    reset_in = snapshot["pointsResetIn"]
     if limit_h <= 0:
-        return requested
+        return True, "limite horaire inconnue"
     remaining = max(0, limit_h - spent)
-    usable = remaining * 0.85
-    est = points_per_report_estimate()
-    cap = int(usable // est)
-    effective = max(1, min(requested, cap)) if cap >= 1 else 1
-    if effective < requested:
-        print(
-            f"Batch WCL plafonné {requested} → {effective} "
-            f"(quota {spent}/{limit_h} pts, ~{est} pts/report)."
+    reserve = max(50, int(limit_h * quota_reserve_fraction()))
+    cost = estimated_report_cost()
+    if remaining < cost + reserve:
+        return (
+            False,
+            f"quota {spent}/{limit_h} pts, reste {remaining}, "
+            f"besoin ~{cost}+{reserve} (reset {reset_in}s)",
         )
-    return effective
+    return (
+        True,
+        f"quota {spent}/{limit_h} pts, estimé ~{cost}/report (reset {reset_in}s)",
+    )
+
+
+def measure_report_points_delta(spent_before: int | None) -> int | None:
+    """Points consommés depuis ``spent_before`` (``rateLimitData`` API)."""
+    if spent_before is None:
+        return None
+    snapshot = refresh_rate_limit_data(force=True)
+    if not snapshot:
+        return None
+    return max(0, snapshot["pointsSpentThisHour"] - spent_before)
 
 
 def _adaptive_sleep_seconds() -> float | None:
