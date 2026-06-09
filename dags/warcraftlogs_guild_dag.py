@@ -6,6 +6,7 @@ Transform bronze → ClickHouse : DAG séparé ``warcraftlogs_lakehouse_dbt``.
 
   1. ``sync_report_catalog`` — catalogue API → ``ingestion_state`` (Delta)
   2. ``ingest_reports_incremental`` — par report : fights + stats → bronze Delta
+     (``fight_player_stats`` flush par fight ; ``fight_tables_raw`` idem)
 
 Déclencher dbt manuellement après ingest (ex. 3 reports de test) :
   DAG ``warcraftlogs_lakehouse_dbt`` → Trigger → ``dbt_silver`` / ``dbt_gold``.
@@ -29,6 +30,9 @@ Airflow :
     - ``wcl_quota_reserve_fraction`` : ``0.05``
 
 MinIO / ClickHouse : réseau Docker + creds compose (pas de connexion Airflow).
+
+Docker (``EXTRA_CELERY_CONFIG``) : ``worker_max_tasks_per_child=1`` recycle le worker
+après chaque task Airflow pour libérer la RAM (évite OOM sur VPS 8 Go).
 """
 
 from __future__ import annotations
