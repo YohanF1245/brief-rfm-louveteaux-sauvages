@@ -276,7 +276,20 @@ def list_pending_report_codes(limit: int | None = None) -> list[str]:
     return codes
 
 
-def mark_ingestion_ok(report_code: str) -> None:
+def median_ingest_points(*, last_n: int = 20) -> float | None:
+    """Médiane des points API mesurés sur les derniers reports ``ok``."""
+    df = read_delta_df(BRONZE_PATHS["ingestion_state"])
+    if df.empty or "last_ingest_points" not in df.columns:
+        return None
+    ok = df[df["status"].astype(str) == "ok"].copy()
+    pts = pd.to_numeric(ok["last_ingest_points"], errors="coerce").dropna()
+    if pts.empty:
+        return None
+    sample = pts.tail(max(1, last_n))
+    return float(sample.median())
+
+
+def mark_ingestion_ok(report_code: str, *, ingest_points: int | None = None) -> None:
     df = read_delta_df(BRONZE_PATHS["ingestion_state"])
     if df.empty or report_code not in df["report_code"].values:
         return
@@ -285,6 +298,8 @@ def mark_ingestion_ok(report_code: str) -> None:
     row["last_error"] = None
     row["synced_at"] = pd.Timestamp.utcnow()
     row["fetched_at"] = pd.Timestamp.utcnow()
+    if ingest_points is not None:
+        row["last_ingest_points"] = int(ingest_points)
     replace_report_in_bronze(BRONZE_PATHS["ingestion_state"], pd.DataFrame([row]), report_code)
 
 
