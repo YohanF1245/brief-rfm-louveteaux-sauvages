@@ -75,6 +75,7 @@ def load_consumables(
             report_start_at,
             player_name,
             guild_name,
+            player_guild_name,
             boss_name,
             raid_or_dungeon,
             difficulty_label,
