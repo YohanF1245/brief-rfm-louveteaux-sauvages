@@ -25,3 +25,15 @@ models:
         tests: [not_null]
       - name: dps
         tests: [not_null]
+
+  - name: wcl_player_dps_viz
+    description: "DPS boss enrichi — viz multi-joueurs raid/donjon (Power BI / Streamlit)."
+    columns:
+      - name: player_name
+        tests: [not_null]
+      - name: dps
+        tests: [not_null]
+      - name: raid_or_dungeon
+        tests: [not_null]
+      - name: is_nightmares_asylum
+        tests: [not_null]
