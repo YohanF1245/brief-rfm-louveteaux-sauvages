@@ -1,8 +1,6 @@
 {{ config(
     materialized='table',
     schema='gold',
-    engine='MergeTree()',
-    order_by='(report_code, fight_id, player_name)',
     tags=['warcraftlogs', 'gold', 'power_bi']
 ) }}
 
@@ -30,8 +28,8 @@ SELECT
     s.total_amount,
     round(s.rate_per_sec, 2) AS dps,
     s.player_id,
-    s.report_code,
-    s.fight_id,
+    s.report_code AS report_code,
+    s.fight_id AS fight_id,
     now() AS _gold_loaded_at
 FROM {{ ref('wcl_player_fight_metrics') }} AS s
 INNER JOIN {{ ref('wcl_fights') }} AS f
