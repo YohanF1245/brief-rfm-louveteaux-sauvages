@@ -15,7 +15,7 @@ from deltalake import write_deltalake
 DBT_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt"))
 DBT_RUNTIME_DIR = Path(os.environ.get("DBT_RUNTIME_DIR", "/opt/airflow/logs/dbt"))
 WCL_DBT_SILVER = "wcl_reports wcl_fights wcl_player_fight_metrics wcl_ingestion_state"
-WCL_DBT_GOLD = "wcl_boss_dps"
+WCL_DBT_GOLD = "wcl_boss_dps wcl_player_dps_viz"
 BRONZE_DELTA_PATH = "s3://lake/bronze/stack_test/ventes"
 DELTA_TABLE_URL = "http://minio:9000/lake/bronze/stack_test/ventes"
 
@@ -152,17 +152,20 @@ def _assert_wcl_models_on_disk() -> None:
         "wcl_ingestion_state.sql",
     ]
     silver_dir = DBT_DIR / "models" / "silver"
-    gold_file = DBT_DIR / "models" / "gold" / "wcl_boss_dps.sql"
+    gold_dir = DBT_DIR / "models" / "gold"
+    gold_expected = ["wcl_boss_dps.sql", "wcl_player_dps_viz.sql"]
     present = sorted(p.name for p in silver_dir.glob("wcl_*.sql")) if silver_dir.is_dir() else []
+    gold_present = sorted(p.name for p in gold_dir.glob("wcl_*.sql")) if gold_dir.is_dir() else []
     missing = [name for name in expected if name not in present]
-    if missing or not gold_file.is_file():
+    missing_gold = [name for name in gold_expected if name not in gold_present]
+    if missing or missing_gold:
         raise RuntimeError(
             "Modèles dbt WCL absents sur le worker Airflow. "
             f"Présents dans {silver_dir}: {present or '(aucun)'}. "
-            f"Manquants: {missing or '—'}. "
-            f"Gold wcl_boss_dps.sql: {'OK' if gold_file.is_file() else 'ABSENT'}. "
-            "Déployer le repo (merge develop → deploy-prod + workflow GitHub) "
-            "ou copier dbt/models/{silver,gold}/wcl_*.sql sur le serveur."
+            f"Manquants silver: {missing or '—'}. "
+            f"Gold présents: {gold_present or '(aucun)'}. "
+            f"Manquants gold: {missing_gold or '—'}. "
+            "Déployer le repo ou copier dbt/models/{{silver,gold}}/wcl_*.sql sur le serveur."
         )
 
 
