@@ -3,6 +3,9 @@ version: 1.0.0
 config-version: 2
 profile: rfm_lakehouse
 
+# Packages hors du projet monté (Airflow worker : DBT_PACKAGES_INSTALL_PATH)
+packages-install-path: "{{ env_var('DBT_PACKAGES_INSTALL_PATH', 'dbt_packages') }}"
+
 model-paths: ["models"]
 analysis-paths: ["analyses"]
 test-paths: ["tests"]
