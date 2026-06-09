@@ -4,6 +4,7 @@ Roster guilde Nightmares Asylum — sync journalier API → bronze Delta.
 Flux :
   1. ``sync_guild_roster`` — ``guild.members`` WCL → ``s3://lake/bronze/warcraftlogs/guild_roster``
   2. ``dbt_silver_roster`` — ``silver.wcl_guild_roster`` + ``silver.wcl_fight_player_guids``
+     (guids lus depuis la bronze ``fight_player_stats``, pas besoin de rebuild metrics avant)
 
 Puis lancer ``warcraftlogs_lakehouse_dbt`` (gold) ou attendre le schedule dbt pour
 propager ``is_guild_member`` / ``player_guid`` dans les viz Streamlit.
