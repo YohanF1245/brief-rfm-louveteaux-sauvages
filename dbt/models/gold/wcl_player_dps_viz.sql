@@ -1,8 +1,6 @@
 {{ config(
     materialized='table',
     schema='gold',
-    engine='MergeTree()',
-    order_by='(report_code, fight_id, player_name)',
     tags=['warcraftlogs', 'gold', 'power_bi']
 ) }}
 
