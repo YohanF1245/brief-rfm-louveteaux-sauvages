@@ -55,6 +55,17 @@ def _ingest_batch_size() -> int:
         return max(1, int(os.environ.get("WCL_INGEST_BATCH_SIZE", "25")))
 
 
+def wcl_dbt_after_ingest_enabled() -> bool:
+    """Variable Airflow ``wcl_dbt_after_ingest`` (défaut : true en prod)."""
+    try:
+        from airflow.sdk import Variable
+
+        raw = str(Variable.get("wcl_dbt_after_ingest", default="true")).strip().lower()
+    except Exception:
+        raw = os.environ.get("WCL_DBT_AFTER_INGEST", "true").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def sync_report_catalog(**_) -> int:
     """Catalogue API → Delta ingestion_state (léger, reprise safe)."""
     repair_ingestion_state_schema()
