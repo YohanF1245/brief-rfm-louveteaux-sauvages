@@ -15,10 +15,13 @@ WITH player_lookup AS (
         fight_id,
         player_id,
         any(player_name) AS player_name
-    FROM {{ ref('wcl_player_fight_metrics') }}
-    WHERE metric IN ('dps', 'summary', 'hps', 'healing')
-      AND player_id IS NOT NULL
-      AND player_name != ''
+    FROM (
+        SELECT report_code, fight_id, player_id, player_name
+        FROM {{ ref('wcl_player_fight_metrics') }}
+        WHERE metric IN ('dps', 'summary', 'hps')
+          AND player_id IS NOT NULL
+          AND player_name != ''
+    )
     GROUP BY report_code, fight_id, player_id
 ),
 raw_consumables AS (
