@@ -211,7 +211,8 @@ def run_dbt(select: str, **_) -> None:
     if result.stderr:
         print(result.stderr)
     if result.returncode != 0:
-        raise RuntimeError(f"dbt run échoué (code {result.returncode})")
+        detail = result.stderr or result.stdout
+        raise RuntimeError(f"dbt run échoué (code {result.returncode}):\n{detail}")
     if "Nothing to do" in result.stdout:
         raise RuntimeError(
             f"dbt run n'a rien exécuté pour --select {select!r} (Nothing to do)."
