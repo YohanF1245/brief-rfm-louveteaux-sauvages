@@ -11,6 +11,8 @@ Transform bronze → ClickHouse : DAG séparé ``warcraftlogs_lakehouse_dbt``.
 Déclencher dbt manuellement après ingest (ex. 3 reports de test) :
   DAG ``warcraftlogs_lakehouse_dbt`` → Trigger → ``dbt_silver`` / ``dbt_gold``.
 
+Roster guilde (``player_guid`` pour jointure logs) : DAG ``warcraftlogs_guild_roster`` (quotidien).
+
 Chemins bronze :
   - ``s3://lake/bronze/warcraftlogs/guild_reports``
   - ``s3://lake/bronze/warcraftlogs/fights``
