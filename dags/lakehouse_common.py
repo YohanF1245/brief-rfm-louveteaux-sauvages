@@ -31,8 +31,12 @@ def s3_storage_options() -> dict[str, str]:
 
 
 def dbt_env() -> dict[str, str]:
+    _ensure_dbt_runtime_dirs()
     env = os.environ.copy()
     env.setdefault("DBT_PROFILES_DIR", str(DBT_DIR))
+    # dbt-core >= 1.9 : --target-path retiré de plusieurs commandes (dont deps).
+    env.setdefault("DBT_LOG_PATH", str(DBT_RUNTIME_DIR))
+    env.setdefault("DBT_TARGET_PATH", str(DBT_RUNTIME_DIR / "target"))
     env.setdefault("DBT_CLICKHOUSE_HOST", "clickhouse")
     env.setdefault("DBT_CLICKHOUSE_PORT", "8123")
     env.setdefault("DBT_CLICKHOUSE_USER", "default")
@@ -80,17 +84,7 @@ def _ensure_dbt_runtime_dirs() -> None:
         path.mkdir(parents=True, exist_ok=True)
 
 
-def _dbt_runtime_args() -> list[str]:
-    return [
-        "--log-path",
-        str(DBT_RUNTIME_DIR),
-        "--target-path",
-        str(DBT_RUNTIME_DIR / "target"),
-    ]
-
-
 def _dbt_base_cmd(*subcommand: str) -> list[str]:
-    _ensure_dbt_runtime_dirs()
     return [
         "dbt",
         *subcommand,
@@ -98,12 +92,10 @@ def _dbt_base_cmd(*subcommand: str) -> list[str]:
         str(DBT_DIR),
         "--profiles-dir",
         str(DBT_DIR),
-        *_dbt_runtime_args(),
     ]
 
 
 def _dbt_deps_cmd() -> list[str]:
-    _ensure_dbt_runtime_dirs()
     return [
         "dbt",
         "deps",
@@ -111,9 +103,6 @@ def _dbt_deps_cmd() -> list[str]:
         str(DBT_DIR),
         "--profiles-dir",
         str(DBT_DIR),
-        *_dbt_runtime_args(),
-        "--packages-install-path",
-        str(DBT_RUNTIME_DIR / "dbt_packages"),
     ]
 
 
@@ -174,12 +163,21 @@ def run_dbt(select: str, **_) -> None:
     if "wcl_" in select:
         _assert_wcl_models_on_disk()
 
-    subprocess.run(
+    deps_result = subprocess.run(
         _dbt_deps_cmd(),
+        capture_output=True,
+        text=True,
         check=False,
         env=dbt_env(),
         cwd=str(DBT_DIR),
     )
+    if deps_result.stdout:
+        print(deps_result.stdout)
+    if deps_result.returncode != 0:
+        raise RuntimeError(
+            "dbt deps échoué (dbt_utils requis). "
+            f"stderr:\n{deps_result.stderr or deps_result.stdout}"
+        )
     matched = _dbt_ls(select)
     if not matched:
         listed = subprocess.run(
