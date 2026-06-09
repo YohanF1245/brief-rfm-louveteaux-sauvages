@@ -159,6 +159,34 @@ def report_catalog_row(
     }
 
 
+def _ensure_ingestion_state_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Colonnes optionnelles requises par dbt / quota (schéma Delta évolutif)."""
+    out = df.copy()
+    if "last_ingest_points" not in out.columns:
+        out["last_ingest_points"] = pd.NA
+    return out
+
+
+def repair_ingestion_state_schema() -> bool:
+    """Ajoute ``last_ingest_points`` au bronze si absent (ClickHouse deltaLake)."""
+    path = BRONZE_PATHS["ingestion_state"]
+    if not _delta_table_readable(path):
+        return False
+    df = read_delta_df(path)
+    if "last_ingest_points" in df.columns:
+        return False
+    df = _ensure_ingestion_state_columns(df)
+    storage = s3_storage_options()
+    write_deltalake(
+        path,
+        _prepare_delta_df(df),
+        mode="overwrite",
+        storage_options=storage,
+    )
+    print(f"ingestion_state : colonne last_ingest_points ajoutée ({len(df)} lignes).")
+    return True
+
+
 def _catalog_state_row(
     report: dict[str, Any],
     guild: dict[str, Any],
@@ -173,6 +201,7 @@ def _catalog_state_row(
         "start_time_ms": report.get("startTime"),
         "last_error": None,
         "ingestion_attempts": attempts,
+        "last_ingest_points": None,
         "synced_at": None,
         "fetched_at": pd.Timestamp.utcnow(),
         "catalog_json": json.dumps(
@@ -217,7 +246,7 @@ def bulk_upsert_catalog_state(
     if not _delta_table_readable(BRONZE_PATHS["ingestion_state"]):
         return write_catalog_to_delta(reports, guild, keys)
 
-    df = read_delta_df(BRONZE_PATHS["ingestion_state"])
+    df = _ensure_ingestion_state_columns(read_delta_df(BRONZE_PATHS["ingestion_state"]))
     updated = 0
 
     for report in reports:
@@ -248,7 +277,7 @@ def bulk_upsert_catalog_state(
     storage = s3_storage_options()
     write_deltalake(
         BRONZE_PATHS["ingestion_state"],
-        _prepare_delta_df(df),
+        _prepare_delta_df(_ensure_ingestion_state_columns(df)),
         mode="overwrite",
         storage_options=storage,
     )
