@@ -370,6 +370,24 @@ def export_report_raw_to_bronze(report_code: str, raw_payload: dict[str, Any]) -
     return replace_report_in_bronze(BRONZE_PATHS["reports_raw"], row, report_code)
 
 
+def export_fight_player_stats_to_bronze(
+    report_code: str,
+    fight_id: int,
+    stat_rows: list[dict[str, Any]],
+) -> int:
+    """Bronze stats parsées : flush par fight (évite d'accumuler tout le report en RAM)."""
+    if not stat_rows:
+        return 0
+    df = pd.DataFrame(stat_rows)
+    df["fetched_at"] = pd.Timestamp.utcnow()
+    return replace_report_in_bronze(
+        BRONZE_PATHS["fight_player_stats"],
+        df,
+        report_code,
+        fight_id=fight_id,
+    )
+
+
 def export_fight_tables_raw_to_bronze(
     report_code: str,
     fight_id: int,
@@ -401,13 +419,9 @@ def export_report_tables_to_bronze(
     report_code: str,
     reports_df: pd.DataFrame,
     fights_df: pd.DataFrame,
-    stats_df: pd.DataFrame,
 ) -> dict[str, int]:
-    counts = {
+    """Métadonnées report + fights. ``fight_player_stats`` : flush par fight (``export_fight_player_stats_to_bronze``)."""
+    return {
         "guild_reports": replace_report_in_bronze(BRONZE_PATHS["guild_reports"], reports_df, report_code),
         "fights": replace_report_in_bronze(BRONZE_PATHS["fights"], fights_df, report_code),
-        "fight_player_stats": replace_report_in_bronze(
-            BRONZE_PATHS["fight_player_stats"], stats_df, report_code
-        ),
     }
-    return counts
