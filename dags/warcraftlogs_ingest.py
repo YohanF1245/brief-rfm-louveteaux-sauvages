@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import json
 import os
 import re
@@ -23,6 +24,7 @@ from warcraftlogs_common import (
 from warcraftlogs_lake import (
     BRONZE_PATHS,
     bulk_upsert_catalog_state,
+    export_fight_player_stats_to_bronze,
     export_fight_tables_raw_to_bronze,
     export_report_raw_to_bronze,
     export_report_tables_to_bronze,
@@ -87,12 +89,30 @@ def _fights_df(fight_rows: list[dict[str, Any]]) -> pd.DataFrame:
     return df
 
 
-def _stats_df(stat_rows: list[dict[str, Any]]) -> pd.DataFrame:
-    if not stat_rows:
-        return pd.DataFrame()
-    df = pd.DataFrame(stat_rows)
-    df["fetched_at"] = pd.Timestamp.utcnow()
-    return df
+def _stat_rows_for_fight(
+    report_code: str,
+    fight_id: int,
+    metrics: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for metric_rows in metrics.values():
+        for row in metric_rows:
+            rows.append(
+                {
+                    "report_code": report_code,
+                    "fight_id": fight_id,
+                    "player_name": row["player_name"],
+                    "metric": row["metric"],
+                    "player_id": row.get("player_id"),
+                    "class_name": row.get("class_name"),
+                    "spec_name": row.get("spec_name"),
+                    "total_amount": row.get("total_amount"),
+                    "active_time_ms": row.get("active_time_ms"),
+                    "rate_per_sec": row.get("rate_per_sec"),
+                    "extra": json.dumps(row.get("extra") or {}),
+                }
+            )
+    return rows
 
 
 def _ingest_single_report(report_code: str) -> dict[str, int]:
@@ -102,7 +122,7 @@ def _ingest_single_report(report_code: str) -> dict[str, int]:
     export_report_raw_to_bronze(report_code, api_report)
 
     fight_rows = fight_rows_from_report(report_code, api_report)
-    stat_rows: list[dict[str, Any]] = []
+    total_stats = 0
 
     eligible = [
         f
@@ -123,23 +143,11 @@ def _ingest_single_report(report_code: str) -> dict[str, int]:
 
         metrics, raw_tables = fetch_fight_tables(report_code, start_ms, end_ms)
         export_fight_tables_raw_to_bronze(report_code, fight_id, raw_tables)
-        for metric_rows in metrics.values():
-            for row in metric_rows:
-                stat_rows.append(
-                    {
-                        "report_code": report_code,
-                        "fight_id": fight_id,
-                        "player_name": row["player_name"],
-                        "metric": row["metric"],
-                        "player_id": row.get("player_id"),
-                        "class_name": row.get("class_name"),
-                        "spec_name": row.get("spec_name"),
-                        "total_amount": row.get("total_amount"),
-                        "active_time_ms": row.get("active_time_ms"),
-                        "rate_per_sec": row.get("rate_per_sec"),
-                        "extra": json.dumps(row.get("extra") or {}),
-                    }
-                )
+        fight_stat_rows = _stat_rows_for_fight(report_code, fight_id, metrics)
+        flushed = export_fight_player_stats_to_bronze(report_code, fight_id, fight_stat_rows)
+        total_stats += flushed
+        del metrics, raw_tables, fight_stat_rows
+        gc.collect()
 
     if catalog:
         reports_df = pd.DataFrame(
@@ -170,12 +178,12 @@ def _ingest_single_report(report_code: str) -> dict[str, int]:
         report_code,
         reports_df,
         _fights_df(fight_rows),
-        _stats_df(stat_rows),
     )
+    bronze_counts["fight_player_stats"] = total_stats
 
     return {
         "fights": len(fight_rows),
-        "stats": len(stat_rows),
+        "stats": total_stats,
         **{f"bronze_{k}": v for k, v in bronze_counts.items()},
     }
 
