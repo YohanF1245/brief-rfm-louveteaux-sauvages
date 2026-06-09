@@ -29,3 +29,5 @@ models:
         +tags: [warcraftlogs, gold]
       wcl_player_dps_viz:
         +tags: [warcraftlogs, gold]
+      wcl_raid_consumables_viz:
+        +tags: [warcraftlogs, gold]

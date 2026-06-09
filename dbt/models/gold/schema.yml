@@ -37,3 +37,13 @@ models:
         tests: [not_null]
       - name: is_nightmares_asylum
         tests: [not_null]
+
+  - name: wcl_raid_consumables_viz
+    description: "Uptime food/flacon/huile et potions en raid boss — Nightmares Asylum."
+    columns:
+      - name: player_name
+        tests: [not_null]
+      - name: consumable_type
+        tests: [not_null]
+      - name: boss_name
+        tests: [not_null]
