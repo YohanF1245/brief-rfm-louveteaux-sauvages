@@ -8,6 +8,7 @@ import streamlit as st
 
 from ch_utils import _esc, ch_query, ch_scalar
 from wcl_guild_filters import guild_player_clause, guild_report_clause
+from wcl_streamlit_helpers import column_values
 
 VIZ_TABLE = "wcl_raid_consumables_viz"
 
@@ -32,7 +33,7 @@ def load_raids(guild_only: bool) -> list[str]:
         ORDER BY raid_or_dungeon
         """
     )
-    return df["raid_or_dungeon"].tolist()
+    return column_values(df, "raid_or_dungeon")
 
 
 @st.cache_data(ttl=120)
@@ -47,7 +48,7 @@ def load_bosses(guild_only: bool, raid: str) -> list[str]:
         ORDER BY boss_name
         """
     )
-    return df["boss_name"].tolist()
+    return column_values(df, "boss_name")
 
 
 @st.cache_data(ttl=60)
@@ -109,14 +110,21 @@ except RuntimeError as exc:
 if row_count == 0:
     st.warning(
         f"La table `gold.{VIZ_TABLE}` est vide. "
-        "Lance le DAG **warcraftlogs_guild_nightmares** ou **warcraftlogs_lakehouse_dbt**."
+        "1) **warcraftlogs_guild_nightmares** (ingest + ré-ingest buffs par joueur) "
+        "2) **warcraftlogs_guild_roster** 3) **warcraftlogs_lakehouse_dbt**."
     )
     st.stop()
 
 guild_only = st.checkbox("Nightmares Asylum uniquement", value=True)
 raids = load_raids(guild_only)
 if not raids:
-    st.info("Aucune donnée consommables pour ce filtre.")
+    if guild_only and row_count > 0:
+        st.warning(
+            "Des lignes existent en gold, mais le filtre **membres guilde** ne retourne rien. "
+            "Décoche « Nightmares Asylum » ou synchronise le roster (`warcraftlogs_guild_roster`)."
+        )
+    else:
+        st.info("Aucune donnée consommables pour ce filtre.")
     st.stop()
 
 col_raid, col_boss, col_diff = st.columns([2, 1, 1])
