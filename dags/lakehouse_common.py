@@ -223,6 +223,10 @@ def run_dbt(select: str, **_) -> None:
         )
     print(f"Modèles sélectionnés ({len(matched)}) : {', '.join(matched)}")
     cmd = _dbt_base_cmd("run", "--select", select)
+    # Gold WCL : --full-refresh recrée les tables (schéma ClickHouse), sans pre_hook DROP
+    # qui casse l'échange de tables du adapter dbt-clickhouse.
+    if set(matched) & {"wcl_boss_dps", "wcl_player_dps_viz", "wcl_raid_consumables_viz"}:
+        cmd.append("--full-refresh")
     print("Commande :", " ".join(cmd))
     result = subprocess.run(
         cmd,
