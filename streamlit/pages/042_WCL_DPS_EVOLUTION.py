@@ -1,4 +1,4 @@
-"""Évolution du DPS boss par joueur (gold.wcl_boss_dps / ClickHouse)."""
+"""Évolution DPS multi-joueurs par raid / donjon (gold.wcl_player_dps_viz)."""
 
 from __future__ import annotations
 
@@ -8,56 +8,89 @@ import streamlit as st
 
 from ch_utils import _esc, ch_query, ch_scalar
 
+VIZ_TABLE = "wcl_player_dps_viz"
+
 st.set_page_config(page_title="WCL — Évolution DPS", layout="wide")
 
 st.title("Warcraft Logs — Évolution DPS")
-st.caption(
-    "Courbe DPS par pull (boss × joueur). "
-    "Alimenté par `gold.wcl_boss_dps` — DAG `warcraftlogs_lakehouse_dbt`."
-)
+st.caption(f"Source : `gold.{VIZ_TABLE}` — DAG `warcraftlogs_guild_nightmares` ou `warcraftlogs_lakehouse_dbt`.")
+
+
+def _guild_clause(guild_only: bool) -> str:
+    return "is_nightmares_asylum = 1" if guild_only else "1 = 1"
 
 
 @st.cache_data(ttl=120)
-def load_players() -> list[str]:
+def load_raids(guild_only: bool) -> list[str]:
     df = ch_query(
+        f"""
+        SELECT DISTINCT raid_or_dungeon
+        FROM {VIZ_TABLE}
+        WHERE {_guild_clause(guild_only)}
+          AND raid_or_dungeon != ''
+        ORDER BY raid_or_dungeon
         """
+    )
+    return df["raid_or_dungeon"].tolist()
+
+
+@st.cache_data(ttl=120)
+def load_bosses(guild_only: bool, raid: str) -> list[str]:
+    df = ch_query(
+        f"""
+        SELECT DISTINCT boss_name
+        FROM {VIZ_TABLE}
+        WHERE {_guild_clause(guild_only)}
+          AND raid_or_dungeon = '{_esc(raid)}'
+          AND boss_name != ''
+        ORDER BY boss_name
+        """
+    )
+    return df["boss_name"].tolist()
+
+
+@st.cache_data(ttl=120)
+def load_cohort_players(guild_only: bool, raid: str) -> list[str]:
+    df = ch_query(
+        f"""
         SELECT DISTINCT player_name
-        FROM wcl_boss_dps
-        WHERE player_name != ''
+        FROM {VIZ_TABLE}
+        WHERE {_guild_clause(guild_only)}
+          AND raid_or_dungeon = '{_esc(raid)}'
+          AND player_name != ''
         ORDER BY player_name
         """
     )
     return df["player_name"].tolist()
 
 
-@st.cache_data(ttl=120)
-def load_bosses(player: str) -> list[str]:
-    df = ch_query(
-        f"""
-        SELECT DISTINCT fight_name
-        FROM wcl_boss_dps
-        WHERE player_name = '{_esc(player)}'
-        ORDER BY fight_name
-        """
-    )
-    return df["fight_name"].tolist()
-
-
 @st.cache_data(ttl=60)
-def load_dps_series(
-    player: str,
-    boss: str,
+def load_dps_data(
+    guild_only: bool,
+    raid: str,
+    boss: str | None,
+    players: tuple[str, ...],
+    difficulty_labels: tuple[str, ...],
+    keystone_levels: tuple[int, ...],
     kills_only: bool,
-    difficulty: int | None,
 ) -> pd.DataFrame:
     filters = [
-        f"player_name = '{_esc(player)}'",
-        f"fight_name = '{_esc(boss)}'",
+        _guild_clause(guild_only),
+        f"raid_or_dungeon = '{_esc(raid)}'",
     ]
+    if boss:
+        filters.append(f"boss_name = '{_esc(boss)}'")
+    if players:
+        quoted = ", ".join(f"'{_esc(p)}'" for p in players)
+        filters.append(f"player_name IN ({quoted})")
+    if difficulty_labels:
+        quoted = ", ".join(f"'{_esc(d)}'" for d in difficulty_labels)
+        filters.append(f"difficulty_label IN ({quoted})")
+    if keystone_levels:
+        levels = ", ".join(str(int(k)) for k in keystone_levels)
+        filters.append(f"keystone_level IN ({levels})")
     if kills_only:
         filters.append("outcome = 'kill'")
-    if difficulty is not None:
-        filters.append(f"difficulty = {int(difficulty)}")
 
     where = " AND ".join(filters)
     df = ch_query(
@@ -65,18 +98,23 @@ def load_dps_series(
         SELECT
             report_start_at,
             report_date,
+            player_name,
+            guild_name,
             dps,
-            item_level,
-            spec_name,
             class_name,
+            spec_name,
+            item_level,
+            raid_or_dungeon,
+            boss_name,
+            difficulty_label,
+            keystone_level,
+            content_type,
             outcome,
-            difficulty,
             duration_sec,
-            zone_name,
             report_title
-        FROM wcl_boss_dps
+        FROM {VIZ_TABLE}
         WHERE {where}
-        ORDER BY report_start_at
+        ORDER BY report_start_at, player_name
         """
     )
     if df.empty:
@@ -86,114 +124,145 @@ def load_dps_series(
     df["report_date"] = pd.to_datetime(df["report_date"])
     df["dps"] = pd.to_numeric(df["dps"], errors="coerce")
     df["item_level"] = pd.to_numeric(df["item_level"], errors="coerce")
+    df["keystone_level"] = pd.to_numeric(df["keystone_level"], errors="coerce")
     return df
 
 
 try:
-    row_count = ch_scalar("SELECT count() FROM wcl_boss_dps")
+    row_count = ch_scalar(f"SELECT count() FROM {VIZ_TABLE}")
 except RuntimeError as exc:
     st.error(f"Connexion ClickHouse impossible : {exc}")
     st.stop()
 
 if row_count == 0:
     st.warning(
-        "La table `gold.wcl_boss_dps` est vide. "
+        f"La table `gold.{VIZ_TABLE}` est vide. "
         "Lance le DAG **warcraftlogs_lakehouse_dbt** (silver + gold) dans Airflow."
     )
     st.stop()
 
-players = load_players()
-if not players:
-    st.warning("Aucun joueur dans gold.wcl_boss_dps.")
+col_guild, col_raid = st.columns([1, 2])
+
+with col_guild:
+    guild_only = st.checkbox("Nightmares Asylum uniquement", value=True)
+
+raids = load_raids(guild_only)
+if not raids:
+    st.info("Aucun raid / donjon pour ce filtre guilde.")
     st.stop()
 
-default_player_idx = next(
-    (i for i, name in enumerate(players) if "kimahri" in name.lower()),
-    0,
-)
+with col_raid:
+    raid = st.selectbox("Raid / donjon", raids)
 
-col_player, col_boss, col_opts = st.columns([1, 1, 1])
+bosses = load_bosses(guild_only, raid)
+cohort = load_cohort_players(guild_only, raid)
 
-with col_player:
-    player = st.selectbox("Joueur", players, index=default_player_idx)
-
-bosses = load_bosses(player)
-if not bosses:
-    st.info(f"Aucun boss enregistré pour **{player}**.")
-    st.stop()
+col_boss, col_diff, col_opts = st.columns([1, 1, 1])
 
 with col_boss:
-    boss = st.selectbox("Boss", bosses)
+    boss_options = ["Tous les boss"] + bosses
+    boss_choice = st.selectbox("Boss", boss_options)
+    boss_filter = None if boss_choice == "Tous les boss" else boss_choice
+
+with col_diff:
+    diff_df = ch_query(
+        f"""
+        SELECT DISTINCT difficulty_label
+        FROM {VIZ_TABLE}
+        WHERE {_guild_clause(guild_only)}
+          AND raid_or_dungeon = '{_esc(raid)}'
+        ORDER BY difficulty_label
+        """
+    )
+    diff_labels = diff_df["difficulty_label"].tolist() if not diff_df.empty else []
+    difficulty_selected = st.multiselect(
+        "Difficulté",
+        diff_labels,
+        default=diff_labels,
+    )
 
 with col_opts:
     kills_only = st.checkbox("Kills uniquement", value=False)
-    diff_df = ch_query(
+    key_df = ch_query(
         f"""
-        SELECT DISTINCT difficulty
-        FROM wcl_boss_dps
-        WHERE player_name = '{_esc(player)}'
-          AND fight_name = '{_esc(boss)}'
-          AND difficulty IS NOT NULL
-        ORDER BY difficulty
+        SELECT DISTINCT keystone_level
+        FROM {VIZ_TABLE}
+        WHERE {_guild_clause(guild_only)}
+          AND raid_or_dungeon = '{_esc(raid)}'
+          AND keystone_level > 0
+        ORDER BY keystone_level
         """
     )
-    diff_options = ["Toutes"]
-    if not diff_df.empty:
-        diff_options += [str(int(v)) for v in diff_df["difficulty"].dropna()]
-    difficulty_choice = st.selectbox("Difficulté", diff_options)
-    difficulty = None if difficulty_choice == "Toutes" else int(difficulty_choice)
+    key_levels: list[int] = []
+    if not key_df.empty:
+        key_levels = [int(v) for v in key_df["keystone_level"].dropna()]
+    keystone_selected: tuple[int, ...] = ()
+    if key_levels:
+        keystone_selected = tuple(
+            st.multiselect("Niveau de clé (M+)", key_levels, default=key_levels)
+        )
 
-df = load_dps_series(player, boss, kills_only, difficulty)
-
-if df.empty:
-    st.info("Aucun pull pour cette combinaison (filtres inclus).")
-    st.stop()
-
-best = int(df["dps"].max())
-avg = int(df["dps"].mean())
-nb = len(df)
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Pulls", nb)
-m2.metric("Meilleur DPS", f"{best:,}")
-m3.metric("DPS moyen", f"{avg:,}")
-m4.metric("Ilvl max", int(df["item_level"].max()) if df["item_level"].notna().any() else "—")
-
-df["label"] = df.apply(
-    lambda r: (
-        f"{r['outcome']} · {r['spec_name']} · ilvl {int(r['item_level'])}"
-        if pd.notna(r["item_level"])
-        else f"{r['outcome']} · {r['spec_name']}"
-    ),
-    axis=1,
+players_selected = st.multiselect(
+    "Joueurs (cohorte du raid / donjon)",
+    cohort,
+    default=cohort,
+    help="Par défaut : tous les joueurs ayant au moins un pull dans ce contenu.",
 )
 
+if not players_selected:
+    st.info("Sélectionne au moins un joueur.")
+    st.stop()
+
+df = load_dps_data(
+    guild_only,
+    raid,
+    boss_filter,
+    tuple(players_selected),
+    tuple(difficulty_selected),
+    keystone_selected,
+    kills_only,
+)
+
+if df.empty:
+    st.info("Aucun pull pour cette combinaison de filtres.")
+    st.stop()
+
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Joueurs", df["player_name"].nunique())
+m2.metric("Pulls", len(df))
+m3.metric("Meilleur DPS", f"{int(df['dps'].max()):,}")
+m4.metric("DPS moyen", f"{int(df['dps'].mean()):,}")
+
+subtitle = raid if boss_filter is None else f"{raid} — {boss_filter}"
 fig = px.line(
     df,
     x="report_start_at",
     y="dps",
+    color="player_name",
     markers=True,
-    color="outcome",
-    color_discrete_map={"kill": "#2ecc71", "wipe": "#e74c3c"},
     hover_data={
         "report_start_at": "|%Y-%m-%d %H:%M",
         "dps": ":,.0f",
-        "item_level": True,
+        "boss_name": True,
+        "difficulty_label": True,
+        "keystone_level": True,
         "spec_name": True,
-        "duration_sec": True,
-        "zone_name": True,
-        "label": False,
+        "item_level": True,
+        "outcome": True,
+        "guild_name": True,
+        "player_name": False,
     },
     labels={
         "report_start_at": "Date du log",
         "dps": "DPS",
-        "outcome": "Résultat",
+        "player_name": "Joueur",
     },
-    title=f"{player} — {boss}",
+    title=subtitle,
 )
 fig.update_layout(
     hovermode="x unified",
-    legend=dict(title="Résultat"),
-    height=480,
+    legend=dict(title="Joueur"),
+    height=520,
 )
 fig.update_traces(mode="lines+markers")
 st.plotly_chart(fig, use_container_width=True)
@@ -202,13 +271,16 @@ with st.expander("Détail des pulls"):
     show = df[
         [
             "report_start_at",
+            "player_name",
+            "guild_name",
+            "boss_name",
             "dps",
-            "item_level",
+            "difficulty_label",
+            "keystone_level",
             "spec_name",
+            "item_level",
             "outcome",
-            "difficulty",
             "duration_sec",
-            "zone_name",
             "report_title",
         ]
     ].copy()
