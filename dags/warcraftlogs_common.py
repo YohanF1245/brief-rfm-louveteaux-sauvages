@@ -23,6 +23,23 @@ DEFAULT_GUILD_URL = (
 WCL_CONN_ID = "WCL_API"
 
 REPORT_PAGE_SIZE = 100
+ROSTER_PAGE_SIZE = 100
+
+WOW_CLASS_NAMES: dict[int, str] = {
+    1: "Warrior",
+    2: "Paladin",
+    3: "Hunter",
+    4: "Rogue",
+    5: "Priest",
+    6: "Death Knight",
+    7: "Shaman",
+    8: "Mage",
+    9: "Warlock",
+    10: "Monk",
+    11: "Druid",
+    12: "Demon Hunter",
+    13: "Evoker",
+}
 
 USER_REPORTS_QUERY = """
 query UserReports($userId: Int!, $limit: Int!, $page: Int!) {
@@ -41,6 +58,39 @@ query UserReports($userId: Int!, $limit: Int!, $page: Int!) {
         zone { id name }
         owner { id name }
         guild { id name server { slug region { slug } } }
+      }
+    }
+  }
+}
+"""
+
+GUILD_MEMBERS_QUERY = """
+query GuildMembers(
+  $name: String!
+  $serverSlug: String!
+  $serverRegion: String!
+  $limit: Int!
+  $page: Int!
+) {
+  guildData {
+    guild(name: $name, serverSlug: $serverSlug, serverRegion: $serverRegion) {
+      id
+      name
+      server { name slug region { slug } }
+      members(limit: $limit, page: $page) {
+        total
+        has_more_pages
+        current_page
+        last_page
+        data {
+          id
+          canonicalID
+          name
+          classID
+          level
+          guildRank
+          server { slug region { slug } }
+        }
       }
     }
   }
@@ -724,6 +774,119 @@ def parse_table_entries(table_data: Any, metric: str) -> list[dict[str, Any]]:
             rows.extend(_parse_auras_rows(block, metric, total_time))
 
     return rows
+
+
+def _wow_class_name(class_id: Any) -> str | None:
+    try:
+        return WOW_CLASS_NAMES.get(int(class_id))
+    except (TypeError, ValueError):
+        return None
+
+
+def guild_roster_rows_from_api(
+    guild: dict[str, Any],
+    keys: dict[str, Any],
+    members: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Normalise le roster API WCL pour bronze Delta."""
+    guild_id = guild.get("id")
+    guild_name = guild.get("name") or keys.get("guild_name")
+    rows: list[dict[str, Any]] = []
+    for member in members:
+        if not isinstance(member, dict):
+            continue
+        name = str(member.get("name") or "").strip()
+        if not name:
+            continue
+        canonical_id = member.get("canonicalID")
+        wcl_character_id = member.get("id")
+        player_guid = canonical_id or wcl_character_id
+        server = (member.get("server") or {}) if isinstance(member.get("server"), dict) else {}
+        region = (server.get("region") or {}) if isinstance(server.get("region"), dict) else {}
+        class_id = member.get("classID")
+        rows.append(
+            {
+                "guild_id": guild_id,
+                "guild_name": guild_name,
+                "server_region": keys.get("server_region") or region.get("slug"),
+                "server_slug": keys.get("server_slug") or server.get("slug"),
+                "wcl_character_id": wcl_character_id,
+                "canonical_id": canonical_id,
+                "player_guid": player_guid,
+                "character_name": name,
+                "class_id": class_id,
+                "class_name": _wow_class_name(class_id),
+                "character_level": member.get("level"),
+                "guild_rank": member.get("guildRank"),
+            }
+        )
+    return rows
+
+
+def fetch_guild_members_page(
+    guild_url: str,
+    *,
+    page: int = 1,
+    limit: int = ROSTER_PAGE_SIZE,
+) -> dict[str, Any]:
+    """Une page du roster guilde (membres WCL vérifiés)."""
+    keys = parse_guild_url(guild_url)
+    variables = {
+        "name": keys["guild_name"],
+        "serverSlug": keys["server_slug"],
+        "serverRegion": keys["server_region"],
+        "limit": min(max(limit, 1), ROSTER_PAGE_SIZE),
+        "page": max(page, 1),
+    }
+    data = graphql_request(GUILD_MEMBERS_QUERY, variables)
+    guild = (data.get("guildData") or {}).get("guild") or {}
+    members_block = guild.get("members") or {}
+    return {
+        "guild": guild,
+        "members": members_block.get("data") or [],
+        "members_total": members_block.get("total"),
+        "has_more_pages": bool(members_block.get("has_more_pages")),
+        "current_page": members_block.get("current_page"),
+        "last_page": members_block.get("last_page"),
+        "query": keys,
+    }
+
+
+def fetch_all_guild_members(
+    guild_url: str | None = None,
+    *,
+    page_size: int = ROSTER_PAGE_SIZE,
+    max_pages: int | None = None,
+) -> dict[str, Any]:
+    """Roster complet guilde (pagination API ``guild.members``)."""
+    url = guild_url or guild_url_from_env()
+    keys = parse_guild_url(url)
+    guild: dict[str, Any] | None = None
+    members: list[dict[str, Any]] = []
+    page = 1
+    last_page: int | None = None
+
+    while True:
+        payload = fetch_guild_members_page(url, page=page, limit=page_size)
+        if guild is None:
+            guild = payload.get("guild") or {}
+        members.extend(payload.get("members") or [])
+        last_page = payload.get("last_page") or last_page
+        if not payload.get("has_more_pages"):
+            break
+        page += 1
+        if max_pages is not None and page > max_pages:
+            break
+        if last_page is not None and page > int(last_page):
+            break
+
+    rows = guild_roster_rows_from_api(guild or {}, keys, members)
+    return {
+        "guild": guild,
+        "query": keys,
+        "members_total": len(members),
+        "rows": rows,
+    }
 
 
 def fetch_guild_reports_page(
