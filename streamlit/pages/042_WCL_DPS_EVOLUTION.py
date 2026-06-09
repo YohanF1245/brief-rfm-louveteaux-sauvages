@@ -8,6 +8,7 @@ import streamlit as st
 
 from ch_utils import _esc, ch_query, ch_scalar
 from wcl_guild_filters import guild_player_clause, guild_report_clause
+from wcl_streamlit_helpers import column_values
 
 VIZ_TABLE = "wcl_player_dps_viz"
 
@@ -29,7 +30,7 @@ def load_raids(guild_only: bool) -> list[str]:
         ORDER BY raid_or_dungeon
         """
     )
-    return df["raid_or_dungeon"].tolist()
+    return column_values(df, "raid_or_dungeon")
 
 
 @st.cache_data(ttl=120)
@@ -45,7 +46,7 @@ def load_bosses(guild_only: bool, raid: str) -> list[str]:
         ORDER BY boss_name
         """
     )
-    return df["boss_name"].tolist()
+    return column_values(df, "boss_name")
 
 
 @st.cache_data(ttl=120)
@@ -62,7 +63,7 @@ def load_cohort_players(guild_only: bool, raid: str) -> list[str]:
         ORDER BY player_name
         """
     )
-    return df["player_name"].tolist()
+    return column_values(df, "player_name")
 
 
 @st.cache_data(ttl=60)
@@ -152,7 +153,14 @@ with col_guild:
 
 raids = load_raids(guild_only)
 if not raids:
-    st.info("Aucun raid / donjon pour ce filtre guilde.")
+    if guild_only and row_count > 0:
+        st.warning(
+            "Des lignes existent dans la table gold, mais aucun raid ne correspond au filtre "
+            "**membres guilde** (`is_guild_member = 1`). "
+            "Décoche « Nightmares Asylum » ou lance **warcraftlogs_guild_roster** + **lakehouse_dbt**."
+        )
+    else:
+        st.info("Aucun raid / donjon pour ce filtre.")
     st.stop()
 
 with col_raid:
