@@ -10,12 +10,14 @@ from typing import Any
 import pandas as pd
 
 from warcraftlogs_common import (
-    cap_ingest_batch_size,
+    estimated_report_cost,
     fetch_all_guild_and_member_reports,
     fetch_fight_tables,
     fetch_report_fights,
     fight_rows_from_report,
     guild_url_from_env,
+    measure_report_points_delta,
+    quota_allows_next_report,
     refresh_rate_limit_data,
 )
 from warcraftlogs_lake import (
@@ -28,6 +30,7 @@ from warcraftlogs_lake import (
     load_catalog_context,
     mark_ingestion_error,
     mark_ingestion_ok,
+    median_ingest_points,
     report_catalog_row,
     _delta_table_readable,
 )
@@ -99,20 +102,31 @@ def _ingest_single_report(report_code: str) -> dict[str, int]:
     fight_rows = fight_rows_from_report(report_code, api_report)
     stat_rows: list[dict[str, Any]] = []
 
-    for fight in fight_rows:
-        start_ms = fight.get("start_time_ms")
-        end_ms = fight.get("end_time_ms")
-        if start_ms is None or end_ms is None or int(start_ms) >= int(end_ms):
-            continue
+    eligible = [
+        f
+        for f in fight_rows
+        if f.get("start_time_ms") is not None
+        and f.get("end_time_ms") is not None
+        and int(f["start_time_ms"]) < int(f["end_time_ms"])
+    ]
+    total_fights = len(eligible)
+    print(f"  {report_code} : {total_fights} fights à traiter (sur {len(fight_rows)} total).")
 
-        metrics, raw_tables = fetch_fight_tables(report_code, int(start_ms), int(end_ms))
-        export_fight_tables_raw_to_bronze(report_code, int(fight["fight_id"]), raw_tables)
+    for idx, fight in enumerate(eligible, 1):
+        start_ms = int(fight["start_time_ms"])
+        end_ms = int(fight["end_time_ms"])
+        fight_id = int(fight["fight_id"])
+        fight_name = fight.get("fight_name") or f"#{fight_id}"
+        print(f"  fight {idx}/{total_fights} id={fight_id} {fight_name}")
+
+        metrics, raw_tables = fetch_fight_tables(report_code, start_ms, end_ms)
+        export_fight_tables_raw_to_bronze(report_code, fight_id, raw_tables)
         for metric_rows in metrics.values():
             for row in metric_rows:
                 stat_rows.append(
                     {
                         "report_code": report_code,
-                        "fight_id": fight["fight_id"],
+                        "fight_id": fight_id,
                         "player_name": row["player_name"],
                         "metric": row["metric"],
                         "player_id": row.get("player_id"),
@@ -156,7 +170,6 @@ def _ingest_single_report(report_code: str) -> dict[str, int]:
         _fights_df(fight_rows),
         _stats_df(stat_rows),
     )
-    mark_ingestion_ok(report_code)
 
     return {
         "fights": len(fight_rows),
@@ -166,39 +179,56 @@ def _ingest_single_report(report_code: str) -> dict[str, int]:
 
 
 def ingest_reports_incremental(**_) -> int:
-    """Ingère les reports pending/error depuis Delta state, un par un."""
+    """Ingère les reports pending jusqu'au quota API (arrêt propre, pas d'erreur)."""
     if not _delta_table_readable(BRONZE_PATHS["ingestion_state"]):
         print("ingestion_state absent — sync catalogue avant ingestion.")
         sync_report_catalog()
 
     refresh_rate_limit_data(force=True)
-    requested = _ingest_batch_size()
-    batch_limit = cap_ingest_batch_size(requested)
-    pending = list_pending_report_codes(limit=batch_limit)
+    batch_max = _ingest_batch_size()
+    pending = list_pending_report_codes(limit=batch_max)
     if not pending:
         print("Aucun report en attente dans le lake.")
         return 0
 
+    measured = median_ingest_points()
+    est = estimated_report_cost()
     quota = refresh_rate_limit_data()
     if quota:
         print(
             f"Quota WCL : {quota['pointsSpentThisHour']}/{quota['limitPerHour']} pts "
-            f"(reset dans {quota['pointsResetIn']} s)."
+            f"(reset {quota['pointsResetIn']} s). "
+            f"Coût estimé/report : ~{est} pts"
+            + (f" (médiane mesurée {int(measured)} pts)" if measured else " (fallback config)")
         )
 
     processed = 0
-    print(f"{len(pending)} reports à ingérer (batch demandé {requested}, effectif {batch_limit}).")
-    for report_code in pending:
+    print(f"{len(pending)} reports candidats (max {batch_max} par run).")
+    for idx, report_code in enumerate(pending, 1):
+        allowed, reason = quota_allows_next_report()
+        if not allowed:
+            print(f"Quota atteint — arrêt propre avant report {idx}/{len(pending)} ({reason}).")
+            break
+
+        quota_before = refresh_rate_limit_data(force=True)
+        spent_before = quota_before["pointsSpentThisHour"] if quota_before else None
+        print(f"[{idx}/{len(pending)}] Ingestion {report_code} — {reason}")
+
         try:
             summary = _ingest_single_report(report_code)
+            ingest_pts = measure_report_points_delta(spent_before)
+            mark_ingestion_ok(report_code, ingest_points=ingest_pts)
             processed += 1
-            print(f"OK {report_code} : {summary}")
+            pts_msg = f", points={ingest_pts}" if ingest_pts is not None else ""
+            if quota_before and ingest_pts is not None:
+                pts_msg += f" ({spent_before}→{spent_before + ingest_pts}/{quota_before['limitPerHour']})"
+            print(f"OK {report_code} : {summary}{pts_msg}")
         except Exception as exc:
             mark_ingestion_error(report_code, str(exc))
             print(f"ERREUR {report_code} : {exc}")
             if _is_rate_limit_error(exc):
                 refresh_rate_limit_data(force=True)
-                print("Quota / 4xx API — arrêt du batch (reports déjà OK conservés).")
+                print("Quota / 4xx API — arrêt propre du batch (reports OK conservés).")
                 break
 
     print(f"Ingestion bronze terminée : {processed}/{len(pending)} reports.")
