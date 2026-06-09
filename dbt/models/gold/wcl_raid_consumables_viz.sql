@@ -6,30 +6,14 @@
 
 /*
   Gold consommables raid : uptime food / flacon / huile + potions en combat boss.
-  Guilde Nightmares Asylum (filtrable via is_nightmares_asylum).
-  Source : silver.wcl_player_fight_metrics (metric buffs + casts).
+  Résolution joueur via ``player_guid`` (summary) + roster API.
 */
-WITH player_lookup AS (
-    SELECT
-        report_code,
-        fight_id,
-        player_id,
-        any(player_name) AS player_name
-    FROM (
-        SELECT report_code, fight_id, player_id, player_name
-        FROM {{ ref('wcl_player_fight_metrics') }}
-        WHERE metric IN ('dps', 'summary', 'hps')
-          AND player_id IS NOT NULL
-          AND player_name != ''
-    )
-    GROUP BY report_code, fight_id, player_id
-),
-raw_consumables AS (
+WITH raw_consumables AS (
     SELECT
         m.report_code,
         m.fight_id,
-        coalesce(pl.player_name, m.player_name) AS player_name,
         m.player_id,
+        m.player_name AS metric_player_name,
         m.class_name,
         m.spec_name,
         m.metric,
@@ -57,16 +41,16 @@ raw_consumables AS (
             ''
         ) AS consumable_type
     FROM {{ ref('wcl_player_fight_metrics') }} AS m
-    LEFT JOIN player_lookup AS pl
-        ON m.report_code = pl.report_code
-        AND m.fight_id = pl.fight_id
-        AND m.player_id = pl.player_id
     WHERE m.metric IN ('buffs', 'casts')
       AND m.entry_name != ''
 ),
 classified AS (
     SELECT
         c.*,
+        g.player_guid,
+        coalesce(nullIf(gr.character_name, ''), g.player_name, c.metric_player_name) AS player_name,
+        gr.guild_name AS player_guild_name,
+        if(gr.player_guid IS NOT NULL, 1, 0) AS is_guild_member,
         if(
             c.consumable_type = 'potion',
             toFloat64(c.total_amount),
@@ -81,12 +65,19 @@ classified AS (
             NULL
         ) AS uptime_sec
     FROM raw_consumables AS c
+    LEFT JOIN {{ ref('wcl_fight_player_guids') }} AS g
+        ON c.report_code = g.report_code
+        AND c.fight_id = g.fight_id
+        AND c.player_id = g.player_id
+    LEFT JOIN {{ ref('wcl_guild_roster') }} AS gr
+        ON g.player_guid = gr.player_guid
     WHERE c.consumable_type != ''
 )
 SELECT
     r.report_start_at,
     toDate(r.report_start_at) AS report_date,
     r.guild_name,
+    c.player_guild_name,
     r.zone_name AS raid_or_dungeon,
     f.fight_name AS boss_name,
     f.difficulty,
@@ -102,6 +93,8 @@ SELECT
     f.keystone_level,
     toFloat64(f.duration_ms) / 1000.0 AS fight_duration_sec,
     c.player_name,
+    c.player_guid,
+    c.is_guild_member,
     c.class_name,
     c.spec_name,
     c.consumable_type,
@@ -124,3 +117,5 @@ INNER JOIN {{ ref('wcl_reports') }} AS r
     ON c.report_code = r.report_code
 WHERE f.is_boss = 1
   AND coalesce(f.keystone_level, 0) = 0
+  AND lower(coalesce(c.player_name, '')) != 'unknown'
+  AND coalesce(c.player_name, '') != ''
