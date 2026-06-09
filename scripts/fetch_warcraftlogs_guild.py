@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "dags"))
 from warcraftlogs_common import (  # noqa: E402
     DEFAULT_GUILD_URL,
     fetch_all_guild_and_member_reports,
+    fetch_all_guild_members,
     fetch_all_guild_reports,
     fetch_fight_tables,
     fetch_guild_reports,
@@ -35,10 +36,26 @@ def main() -> int:
     )
     parser.add_argument("--fights", metavar="REPORT_CODE", help="Afficher les fights d'un report")
     parser.add_argument("--stats", metavar="REPORT_CODE", help="Stats raid d'un report (1er boss fight)")
+    parser.add_argument("--roster", action="store_true", help="Afficher le roster guilde (guild.members)")
     parser.add_argument("--json", action="store_true", help="Sortie JSON brute")
     args = parser.parse_args()
 
     guild_url = args.url or guild_url_from_env() or DEFAULT_GUILD_URL
+
+    if args.roster:
+        data = fetch_all_guild_members(guild_url)
+        if args.json:
+            print(json.dumps(data, indent=2, ensure_ascii=False))
+        else:
+            guild = data.get("guild") or {}
+            print(f"Roster {guild.get('name')} : {len(data.get('rows') or [])} membres")
+            for row in (data.get("rows") or [])[:30]:
+                print(
+                    f"  - {row.get('character_name')} "
+                    f"guid={row.get('player_guid')} "
+                    f"({row.get('class_name')}) rank={row.get('guild_rank')}"
+                )
+        return 0
 
     if args.fights:
         report = fetch_report_fights(args.fights)
