@@ -15,6 +15,7 @@ BRONZE_BASE = "s3://lake/bronze/warcraftlogs"
 
 BRONZE_PATHS = {
     "guild_reports": f"{BRONZE_BASE}/guild_reports",
+    "guild_roster": f"{BRONZE_BASE}/guild_roster",
     "fights": f"{BRONZE_BASE}/fights",
     "fight_player_stats": f"{BRONZE_BASE}/fight_player_stats",
     "fight_tables_raw": f"{BRONZE_BASE}/fight_tables_raw",
@@ -425,3 +426,21 @@ def export_report_tables_to_bronze(
         "guild_reports": replace_report_in_bronze(BRONZE_PATHS["guild_reports"], reports_df, report_code),
         "fights": replace_report_in_bronze(BRONZE_PATHS["fights"], fights_df, report_code),
     }
+
+
+def write_guild_roster_to_bronze(rows: list[dict[str, Any]]) -> int:
+    """Snapshot complet du roster guilde (overwrite quotidien)."""
+    if not rows:
+        print("Roster guilde vide, bronze inchangée.")
+        return 0
+    df = pd.DataFrame(rows)
+    df["fetched_at"] = pd.Timestamp.utcnow()
+    storage = s3_storage_options()
+    write_deltalake(
+        BRONZE_PATHS["guild_roster"],
+        _prepare_delta_df(df),
+        mode="overwrite",
+        storage_options=storage,
+    )
+    print(f"Bronze roster : {BRONZE_PATHS['guild_roster']} ({len(df)} membres)")
+    return len(df)
