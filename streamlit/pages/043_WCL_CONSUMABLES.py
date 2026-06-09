@@ -7,6 +7,7 @@ import plotly.express as px
 import streamlit as st
 
 from ch_utils import _esc, ch_query, ch_scalar
+from wcl_guild_filters import guild_player_clause, guild_report_clause
 
 VIZ_TABLE = "wcl_raid_consumables_viz"
 
@@ -19,17 +20,15 @@ st.caption(
 )
 
 
-def _guild_clause(guild_only: bool) -> str:
-    return "is_nightmares_asylum = 1" if guild_only else "1 = 1"
-
-
 @st.cache_data(ttl=120)
 def load_raids(guild_only: bool) -> list[str]:
     df = ch_query(
         f"""
         SELECT DISTINCT raid_or_dungeon
         FROM {VIZ_TABLE}
-        WHERE {_guild_clause(guild_only)} AND raid_or_dungeon != ''
+        WHERE {guild_report_clause(guild_only)}
+          AND {guild_player_clause(guild_only)}
+          AND raid_or_dungeon != ''
         ORDER BY raid_or_dungeon
         """
     )
@@ -42,7 +41,8 @@ def load_bosses(guild_only: bool, raid: str) -> list[str]:
         f"""
         SELECT DISTINCT boss_name
         FROM {VIZ_TABLE}
-        WHERE {_guild_clause(guild_only)}
+        WHERE {guild_report_clause(guild_only)}
+          AND {guild_player_clause(guild_only)}
           AND raid_or_dungeon = '{_esc(raid)}'
         ORDER BY boss_name
         """
@@ -58,8 +58,10 @@ def load_consumables(
     difficulty_labels: tuple[str, ...],
 ) -> pd.DataFrame:
     filters = [
-        _guild_clause(guild_only),
+        guild_report_clause(guild_only),
+        guild_player_clause(guild_only),
         f"raid_or_dungeon = '{_esc(raid)}'",
+        "lower(player_name) != 'unknown'",
     ]
     if boss:
         filters.append(f"boss_name = '{_esc(boss)}'")
@@ -131,7 +133,9 @@ with col_diff:
         f"""
         SELECT DISTINCT difficulty_label
         FROM {VIZ_TABLE}
-        WHERE {_guild_clause(guild_only)} AND raid_or_dungeon = '{_esc(raid)}'
+        WHERE {guild_report_clause(guild_only)}
+          AND {guild_player_clause(guild_only)}
+          AND raid_or_dungeon = '{_esc(raid)}'
         ORDER BY difficulty_label
         """
     )
