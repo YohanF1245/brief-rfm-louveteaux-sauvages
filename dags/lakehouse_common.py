@@ -14,7 +14,10 @@ from deltalake import write_deltalake
 
 DBT_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt"))
 DBT_RUNTIME_DIR = Path(os.environ.get("DBT_RUNTIME_DIR", "/opt/airflow/logs/dbt"))
-WCL_DBT_SILVER = "wcl_reports wcl_fights wcl_player_fight_metrics wcl_ingestion_state"
+WCL_DBT_SILVER = (
+    "wcl_reports wcl_fights wcl_player_fight_metrics wcl_ingestion_state "
+    "wcl_guild_roster wcl_fight_player_guids"
+)
 WCL_DBT_GOLD = "wcl_boss_dps wcl_player_dps_viz wcl_raid_consumables_viz"
 BRONZE_DELTA_PATH = "s3://lake/bronze/stack_test/ventes"
 DELTA_TABLE_URL = "http://minio:9000/lake/bronze/stack_test/ventes"
@@ -171,6 +174,8 @@ def _assert_wcl_models_on_disk() -> None:
         "wcl_fights.sql",
         "wcl_player_fight_metrics.sql",
         "wcl_ingestion_state.sql",
+        "wcl_guild_roster.sql",
+        "wcl_fight_player_guids.sql",
     ]
     silver_dir = DBT_DIR / "models" / "silver"
     gold_dir = DBT_DIR / "models" / "gold"
