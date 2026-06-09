@@ -31,6 +31,7 @@ from warcraftlogs_lake import (
     mark_ingestion_error,
     mark_ingestion_ok,
     median_ingest_points,
+    repair_ingestion_state_schema,
     report_catalog_row,
     _delta_table_readable,
 )
@@ -54,6 +55,7 @@ def _ingest_batch_size() -> int:
 
 def sync_report_catalog(**_) -> int:
     """Catalogue API → Delta ingestion_state (léger, reprise safe)."""
+    repair_ingestion_state_schema()
     payload = fetch_all_guild_and_member_reports(guild_url_from_env())
     guild = payload.get("guild") or {}
     keys = payload["query"]
