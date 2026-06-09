@@ -2,12 +2,13 @@
 Ingestion Warcraft Logs — guilde Nightmares Asylum (Dalaran EU).
 
 Flux lakehouse (sans Postgres) :
-  API WCL → bronze Delta (MinIO)
+  API WCL → bronze Delta (MinIO) → silver/gold dbt (ClickHouse)
 
   1. ``sync_report_catalog`` — catalogue API → ``ingestion_state`` (Delta)
   2. ``ingest_reports_incremental`` — par report : fights + stats → bronze Delta
+  3. ``dbt_silver`` / ``dbt_gold`` — tables ``silver.wcl_*``, ``gold.wcl_boss_dps``, ``gold.wcl_player_dps_viz``
 
-Silver/gold (dbt) : DAG séparé ``warcraftlogs_lakehouse_dbt`` (sans API, rapide).
+Rafraîchir gold seul (sans API) : DAG ``warcraftlogs_lakehouse_dbt``.
 
 Chemins bronze :
   - ``s3://lake/bronze/warcraftlogs/guild_reports``
@@ -32,6 +33,7 @@ from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk import Variable
 
+from lakehouse_common import WCL_DBT_GOLD, WCL_DBT_SILVER, run_dbt, run_dbt_test
 from warcraftlogs_ingest import ingest_reports_incremental, sync_report_catalog
 
 _DEFAULT_SCHEDULE = "0 */6 * * *"
@@ -53,7 +55,7 @@ with DAG(
     schedule=_dag_schedule(),
     catchup=False,
     max_active_runs=1,
-    tags=["warcraftlogs", "ingest", "api", "raid", "lakehouse", "delta", "bronze"],
+    tags=["warcraftlogs", "ingest", "api", "raid", "lakehouse", "delta", "dbt", "bronze", "silver", "gold"],
     doc_md=__doc__,
 ) as dag:
     sync_catalog = PythonOperator(
@@ -64,5 +66,20 @@ with DAG(
         task_id="ingest_reports_incremental",
         python_callable=ingest_reports_incremental,
     )
+    dbt_silver = PythonOperator(
+        task_id="dbt_silver",
+        python_callable=run_dbt,
+        op_kwargs={"select": WCL_DBT_SILVER},
+    )
+    dbt_gold = PythonOperator(
+        task_id="dbt_gold",
+        python_callable=run_dbt,
+        op_kwargs={"select": WCL_DBT_GOLD},
+    )
+    dbt_test_gold = PythonOperator(
+        task_id="dbt_test_gold",
+        python_callable=run_dbt_test,
+        op_kwargs={"select": WCL_DBT_GOLD},
+    )
 
-    sync_catalog >> ingest_bronze
+    sync_catalog >> ingest_bronze >> dbt_silver >> dbt_gold >> dbt_test_gold
