@@ -56,13 +56,13 @@ def _ingest_batch_size() -> int:
 
 
 def wcl_dbt_after_ingest_enabled() -> bool:
-    """Variable Airflow ``wcl_dbt_after_ingest`` (défaut : true en prod)."""
+    """Variable Airflow ``wcl_dbt_after_ingest`` (défaut : false — lancer dbt manuellement en masse)."""
     try:
         from airflow.sdk import Variable
 
-        raw = str(Variable.get("wcl_dbt_after_ingest", default="true")).strip().lower()
+        raw = str(Variable.get("wcl_dbt_after_ingest", default="false")).strip().lower()
     except Exception:
-        raw = os.environ.get("WCL_DBT_AFTER_INGEST", "true").strip().lower()
+        raw = os.environ.get("WCL_DBT_AFTER_INGEST", "false").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
 
