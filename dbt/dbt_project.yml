@@ -27,3 +27,5 @@ models:
       +schema: gold
       wcl_boss_dps:
         +tags: [warcraftlogs, gold]
+      wcl_player_dps_viz:
+        +tags: [warcraftlogs, gold]
