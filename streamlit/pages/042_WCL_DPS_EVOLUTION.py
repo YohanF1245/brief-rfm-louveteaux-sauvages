@@ -7,6 +7,7 @@ import plotly.express as px
 import streamlit as st
 
 from ch_utils import _esc, ch_query, ch_scalar
+from wcl_guild_filters import guild_player_clause, guild_report_clause
 
 VIZ_TABLE = "wcl_player_dps_viz"
 
@@ -16,17 +17,14 @@ st.title("Warcraft Logs — Évolution DPS")
 st.caption(f"Source : `gold.{VIZ_TABLE}` — DAG `warcraftlogs_guild_nightmares` ou `warcraftlogs_lakehouse_dbt`.")
 
 
-def _guild_clause(guild_only: bool) -> str:
-    return "is_nightmares_asylum = 1" if guild_only else "1 = 1"
-
-
 @st.cache_data(ttl=120)
 def load_raids(guild_only: bool) -> list[str]:
     df = ch_query(
         f"""
         SELECT DISTINCT raid_or_dungeon
         FROM {VIZ_TABLE}
-        WHERE {_guild_clause(guild_only)}
+        WHERE {guild_report_clause(guild_only)}
+          AND {guild_player_clause(guild_only)}
           AND raid_or_dungeon != ''
         ORDER BY raid_or_dungeon
         """
@@ -40,7 +38,8 @@ def load_bosses(guild_only: bool, raid: str) -> list[str]:
         f"""
         SELECT DISTINCT boss_name
         FROM {VIZ_TABLE}
-        WHERE {_guild_clause(guild_only)}
+        WHERE {guild_report_clause(guild_only)}
+          AND {guild_player_clause(guild_only)}
           AND raid_or_dungeon = '{_esc(raid)}'
           AND boss_name != ''
         ORDER BY boss_name
@@ -55,9 +54,11 @@ def load_cohort_players(guild_only: bool, raid: str) -> list[str]:
         f"""
         SELECT DISTINCT player_name
         FROM {VIZ_TABLE}
-        WHERE {_guild_clause(guild_only)}
+        WHERE {guild_report_clause(guild_only)}
+          AND {guild_player_clause(guild_only)}
           AND raid_or_dungeon = '{_esc(raid)}'
           AND player_name != ''
+          AND lower(player_name) != 'unknown'
         ORDER BY player_name
         """
     )
@@ -75,8 +76,10 @@ def load_dps_data(
     kills_only: bool,
 ) -> pd.DataFrame:
     filters = [
-        _guild_clause(guild_only),
+        guild_report_clause(guild_only),
+        guild_player_clause(guild_only),
         f"raid_or_dungeon = '{_esc(raid)}'",
+        "lower(player_name) != 'unknown'",
     ]
     if boss:
         filters.append(f"boss_name = '{_esc(boss)}'")
@@ -169,7 +172,8 @@ with col_diff:
         f"""
         SELECT DISTINCT difficulty_label
         FROM {VIZ_TABLE}
-        WHERE {_guild_clause(guild_only)}
+        WHERE {guild_report_clause(guild_only)}
+          AND {guild_player_clause(guild_only)}
           AND raid_or_dungeon = '{_esc(raid)}'
         ORDER BY difficulty_label
         """
@@ -187,7 +191,8 @@ with col_opts:
         f"""
         SELECT DISTINCT keystone_level
         FROM {VIZ_TABLE}
-        WHERE {_guild_clause(guild_only)}
+        WHERE {guild_report_clause(guild_only)}
+          AND {guild_player_clause(guild_only)}
           AND raid_or_dungeon = '{_esc(raid)}'
           AND keystone_level > 0
         ORDER BY keystone_level
@@ -206,7 +211,10 @@ players_selected = st.multiselect(
     "Joueurs (cohorte du raid / donjon)",
     cohort,
     default=cohort,
-    help="Par défaut : tous les joueurs ayant au moins un pull dans ce contenu.",
+    help=(
+        "Par défaut : joueurs du roster guilde (logs officiels WCL) ayant au moins un pull "
+        "dans ce contenu. Décoche « Nightmares Asylum » pour inclure les logs perso / M+."
+    ),
 )
 
 if not players_selected:
