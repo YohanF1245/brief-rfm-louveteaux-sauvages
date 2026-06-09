@@ -46,8 +46,16 @@ WITH raw_consumables AS (
 ),
 classified AS (
     SELECT
-        c.*,
-        g.player_guid,
+        c.report_code,
+        c.fight_id,
+        c.player_id,
+        c.class_name,
+        c.spec_name,
+        c.consumable_type,
+        c.entry_name,
+        c.total_amount,
+        c.active_time_ms,
+        g.player_guid AS player_guid,
         coalesce(nullIf(gr.character_name, ''), g.player_name, c.metric_player_name) AS player_name,
         gr.guild_name AS player_guild_name,
         if(gr.player_guid IS NOT NULL, 1, 0) AS is_guild_member,
