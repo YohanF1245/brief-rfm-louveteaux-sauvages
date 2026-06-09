@@ -1,15 +1,13 @@
 """
 Ingestion Warcraft Logs — guilde Nightmares Asylum (Dalaran EU).
 
-Flux API → bronze Delta (MinIO) uniquement.
-Transform bronze → ClickHouse : DAG séparé ``warcraftlogs_lakehouse_dbt``.
+Flux API → bronze Delta (MinIO), puis déclenchement optionnel de dbt → ClickHouse.
 
   1. ``sync_report_catalog`` — catalogue API → ``ingestion_state`` (Delta)
   2. ``ingest_reports_incremental`` — par report : fights + stats → bronze Delta
-     (``fight_player_stats`` flush par fight ; ``fight_tables_raw`` idem)
+  3. ``trigger_lakehouse_dbt`` — si ≥1 report ingéré et ``wcl_dbt_after_ingest=true``
 
-Déclencher dbt manuellement après ingest (ex. 3 reports de test) :
-  DAG ``warcraftlogs_lakehouse_dbt`` → Trigger → ``dbt_silver`` / ``dbt_gold``.
+Transform bronze → ClickHouse : DAG ``warcraftlogs_lakehouse_dbt`` (auto ou manuel).
 
 Roster guilde (``player_guid`` pour jointure logs) : DAG ``warcraftlogs_guild_roster`` (quotidien).
 
@@ -35,6 +33,7 @@ Airflow :
     - ``wcl_api_sleep_seconds`` : ``0.2``
     - ``wcl_points_per_report_estimate`` : ``1000`` (fallback si pas encore de mesure)
     - ``wcl_quota_reserve_fraction`` : ``0.05``
+    - ``wcl_dbt_after_ingest`` : ``true`` — déclenche ``warcraftlogs_lakehouse_dbt`` si ≥1 report ingéré
 
 MinIO / ClickHouse : réseau Docker + creds compose (pas de connexion Airflow).
 
@@ -47,10 +46,11 @@ from __future__ import annotations
 from datetime import datetime
 
 from airflow import DAG
-from airflow.providers.standard.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator, ShortCircuitOperator
+from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.sdk import Variable
 
-from warcraftlogs_ingest import ingest_reports_incremental, sync_report_catalog
+from warcraftlogs_ingest import ingest_reports_incremental, sync_report_catalog, wcl_dbt_after_ingest_enabled
 
 _DEFAULT_SCHEDULE = "*/30 * * * *"
 
@@ -63,6 +63,18 @@ def _dag_schedule() -> str | None:
     if not raw or raw.lower() in {"none", "null", "manual"}:
         return None
     return raw
+
+
+def _should_trigger_dbt_after_ingest(**context) -> bool:
+    processed = int(context["ti"].xcom_pull(task_ids="ingest_reports_incremental") or 0)
+    if processed <= 0:
+        print("Post-ingest dbt : skip (aucun report ingéré ce run).")
+        return False
+    if not wcl_dbt_after_ingest_enabled():
+        print("Post-ingest dbt : skip (variable wcl_dbt_after_ingest désactivée).")
+        return False
+    print(f"Post-ingest dbt : {processed} report(s) ingéré(s) → trigger lakehouse_dbt.")
+    return True
 
 
 with DAG(
@@ -82,5 +94,15 @@ with DAG(
         task_id="ingest_reports_incremental",
         python_callable=ingest_reports_incremental,
     )
+    check_dbt = ShortCircuitOperator(
+        task_id="check_dbt_after_ingest",
+        python_callable=_should_trigger_dbt_after_ingest,
+    )
+    trigger_dbt = TriggerDagRunOperator(
+        task_id="trigger_lakehouse_dbt",
+        trigger_dag_id="warcraftlogs_lakehouse_dbt",
+        wait_for_completion=False,
+        reset_dag_run=False,
+    )
 
-    sync_catalog >> ingest_bronze
+    sync_catalog >> ingest_bronze >> check_dbt >> trigger_dbt
