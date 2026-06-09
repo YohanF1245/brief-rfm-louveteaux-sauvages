@@ -37,6 +37,7 @@ def dbt_env() -> dict[str, str]:
     # dbt-core >= 1.9 : --target-path retiré de plusieurs commandes (dont deps).
     env.setdefault("DBT_LOG_PATH", str(DBT_RUNTIME_DIR))
     env.setdefault("DBT_TARGET_PATH", str(DBT_RUNTIME_DIR / "target"))
+    env.setdefault("DBT_PACKAGES_INSTALL_PATH", str(DBT_RUNTIME_DIR / "dbt_packages"))
     env.setdefault("DBT_CLICKHOUSE_HOST", "clickhouse")
     env.setdefault("DBT_CLICKHOUSE_PORT", "8123")
     env.setdefault("DBT_CLICKHOUSE_USER", "default")
@@ -106,6 +107,37 @@ def _dbt_deps_cmd() -> list[str]:
     ]
 
 
+def _dbt_packages_ready() -> bool:
+    """``dbt_utils`` installé dans le répertoire runtime (writable par airflow)."""
+    marker = DBT_RUNTIME_DIR / "dbt_packages" / "dbt_utils" / "dbt_project.yml"
+    return marker.is_file()
+
+
+def _ensure_dbt_deps() -> None:
+    """Installe les packages une fois dans DBT_RUNTIME_DIR (évite Permission denied)."""
+    _ensure_dbt_runtime_dirs()
+    pkg_dir = DBT_RUNTIME_DIR / "dbt_packages"
+    if _dbt_packages_ready():
+        print(f"dbt packages OK : {pkg_dir}")
+        return
+    print(f"dbt deps → {pkg_dir}")
+    deps_result = subprocess.run(
+        _dbt_deps_cmd(),
+        capture_output=True,
+        text=True,
+        check=False,
+        env=dbt_env(),
+        cwd=str(DBT_DIR),
+    )
+    if deps_result.stdout:
+        print(deps_result.stdout)
+    if deps_result.returncode != 0:
+        raise RuntimeError(
+            "dbt deps échoué (dbt_utils requis). "
+            f"stderr:\n{deps_result.stderr or deps_result.stdout}"
+        )
+
+
 def _dbt_ls(select: str) -> list[str]:
     """Liste les nœuds dbt correspondant au sélecteur (vide = rien à exécuter)."""
     result = subprocess.run(
@@ -163,21 +195,7 @@ def run_dbt(select: str, **_) -> None:
     if "wcl_" in select:
         _assert_wcl_models_on_disk()
 
-    deps_result = subprocess.run(
-        _dbt_deps_cmd(),
-        capture_output=True,
-        text=True,
-        check=False,
-        env=dbt_env(),
-        cwd=str(DBT_DIR),
-    )
-    if deps_result.stdout:
-        print(deps_result.stdout)
-    if deps_result.returncode != 0:
-        raise RuntimeError(
-            "dbt deps échoué (dbt_utils requis). "
-            f"stderr:\n{deps_result.stderr or deps_result.stdout}"
-        )
+    _ensure_dbt_deps()
     matched = _dbt_ls(select)
     if not matched:
         listed = subprocess.run(
