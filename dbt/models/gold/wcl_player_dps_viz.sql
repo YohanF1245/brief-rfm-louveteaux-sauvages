@@ -1,8 +1,9 @@
 {{ config(
     materialized='table',
     schema='gold',
-    tags=['warcraftlogs', 'gold', 'power_bi'],
-    pre_hook="DROP TABLE IF EXISTS {{ this }}"
+    engine='MergeTree()',
+    order_by='(report_code, fight_id, player_name)',
+    tags=['warcraftlogs', 'gold', 'power_bi']
 ) }}
 
 /*
