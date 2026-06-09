@@ -33,7 +33,7 @@ Airflow :
     - ``wcl_api_sleep_seconds`` : ``0.2``
     - ``wcl_points_per_report_estimate`` : ``1000`` (fallback si pas encore de mesure)
     - ``wcl_quota_reserve_fraction`` : ``0.05``
-    - ``wcl_dbt_after_ingest`` : ``true`` — déclenche ``warcraftlogs_lakehouse_dbt`` si ≥1 report ingéré
+    - ``wcl_dbt_after_ingest`` : ``false`` (défaut) — ``true`` déclenche lakehouse_dbt après chaque batch ingest
 
 MinIO / ClickHouse : réseau Docker + creds compose (pas de connexion Airflow).
 
