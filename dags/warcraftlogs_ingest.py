@@ -19,6 +19,7 @@ from warcraftlogs_common import (
     refresh_rate_limit_data,
 )
 from warcraftlogs_lake import (
+    BRONZE_PATHS,
     bulk_upsert_catalog_state,
     export_fight_tables_raw_to_bronze,
     export_report_raw_to_bronze,
@@ -28,6 +29,7 @@ from warcraftlogs_lake import (
     mark_ingestion_error,
     mark_ingestion_ok,
     report_catalog_row,
+    _delta_table_readable,
 )
 
 _RATE_LIMIT_RE = re.compile(r"\b(429|4\d{2})\b|rate.?limit", re.I)
@@ -58,6 +60,11 @@ def sync_report_catalog(**_) -> int:
         return 0
 
     pending_n = bulk_upsert_catalog_state(reports, guild, keys)
+    if not _delta_table_readable(BRONZE_PATHS["ingestion_state"]):
+        raise RuntimeError(
+            "ingestion_state Delta absente ou illisible après sync_report_catalog. "
+            "Vérifier MinIO (lake/bronze/warcraftlogs/ingestion_state)."
+        )
 
     print(
         f"Catalogue Delta : {len(reports)} reports API, {pending_n} pending/error mis à jour "
@@ -160,6 +167,10 @@ def _ingest_single_report(report_code: str) -> dict[str, int]:
 
 def ingest_reports_incremental(**_) -> int:
     """Ingère les reports pending/error depuis Delta state, un par un."""
+    if not _delta_table_readable(BRONZE_PATHS["ingestion_state"]):
+        print("ingestion_state absent — sync catalogue avant ingestion.")
+        sync_report_catalog()
+
     refresh_rate_limit_data(force=True)
     requested = _ingest_batch_size()
     batch_limit = cap_ingest_batch_size(requested)
