@@ -162,16 +162,31 @@ TABLE_METRIC_ALIASES: dict[str, str] = {
     "Threat": "threat",
 }
 
+# viewBy Source pour buffs/casts par joueur ; Default pour DPS/soins (entries classiques).
+TABLE_VIEW_BY: dict[str, str] = {
+    "Buffs": "Source",
+    "Debuffs": "Source",
+    "Casts": "Source",
+    "Threat": "Source",
+    "Resources": "Source",
+}
+
 FIGHT_TABLE_QUERY = """
 query FightTable(
   $code: String!
   $startTime: Float!
   $endTime: Float!
   $dataType: TableDataType!
+  $viewBy: ViewType!
 ) {
   reportData {
     report(code: $code) {
-      table(startTime: $startTime, endTime: $endTime, dataType: $dataType)
+      table(
+        startTime: $startTime
+        endTime: $endTime
+        dataType: $dataType
+        viewBy: $viewBy
+      )
     }
   }
 }
@@ -524,6 +539,73 @@ def metric_slug_for_data_type(data_type: str) -> str:
     return TABLE_METRIC_ALIASES.get(data_type, data_type.lower())
 
 
+def view_by_for_data_type(data_type: str) -> str:
+    return TABLE_VIEW_BY.get(data_type, "Default")
+
+
+def _first_spec_name(player: dict[str, Any]) -> Any:
+    specs = player.get("specs") or []
+    if specs and isinstance(specs[0], dict):
+        return specs[0].get("spec")
+    return player.get("spec")
+
+
+def _parse_composition_rows(
+    block: dict[str, Any],
+    total_time: int,
+) -> list[dict[str, Any]]:
+    """Summary WCL : roster dans ``data.composition`` (pas ``entries``)."""
+    rows: list[dict[str, Any]] = []
+    item_level = block.get("itemLevel")
+    for player in block.get("composition") or []:
+        if not isinstance(player, dict):
+            continue
+        extra = dict(player)
+        if item_level is not None:
+            extra.setdefault("itemLevel", item_level)
+        rows.append(
+            _stat_row_from_entry(
+                extra,
+                "summary",
+                player_name=str(player.get("name") or "unknown"),
+                player_id=player.get("id"),
+                class_name=player.get("type"),
+                spec_name=_first_spec_name(player),
+                total_time=total_time,
+            )
+        )
+    return rows
+
+
+def _parse_auras_rows(
+    block: dict[str, Any],
+    metric: str,
+    total_time: int,
+    *,
+    player_name: str = "unknown",
+    player_id: Any = None,
+    class_name: Any = None,
+    spec_name: Any = None,
+) -> list[dict[str, Any]]:
+    """Buffs/Debuffs WCL : ``data.auras`` (uptime par aura, parfois sans joueur)."""
+    rows: list[dict[str, Any]] = []
+    for aura in block.get("auras") or []:
+        if not isinstance(aura, dict):
+            continue
+        rows.append(
+            _stat_row_from_entry(
+                aura,
+                metric,
+                player_name=player_name,
+                player_id=player_id,
+                class_name=class_name,
+                spec_name=spec_name,
+                total_time=total_time,
+            )
+        )
+    return rows
+
+
 def _entry_label(entry: dict[str, Any]) -> str:
     for key in ("name", "abilityName", "targetName"):
         value = entry.get(key)
@@ -572,7 +654,7 @@ def _stat_row_from_entry(
 
 
 def parse_table_entries(table_data: Any, metric: str) -> list[dict[str, Any]]:
-    """Extrait les lignes depuis la réponse ``table`` WCL (entrée complète dans ``extra``)."""
+    """Extrait les lignes depuis la réponse ``table`` WCL (formats entries, composition, auras)."""
     block = _table_entries_block(table_data)
     entries = block.get("entries") or []
     total_time = int(block.get("totalTime") or 0)
@@ -612,6 +694,35 @@ def parse_table_entries(table_data: Any, metric: str) -> list[dict[str, Any]]:
                 total_time=total_time,
             )
         )
+
+    if metric == "summary":
+        rows.extend(_parse_composition_rows(block, total_time))
+
+    if metric in ("buffs", "debuffs"):
+        if rows:
+            # entries + subentries (viewBy Source) : compléter si auras au niveau joueur
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                subentries = entry.get("subentries") or entry.get("subEntries")
+                if subentries:
+                    continue
+                nested_auras = entry.get("auras")
+                if nested_auras:
+                    rows.extend(
+                        _parse_auras_rows(
+                            {"auras": nested_auras},
+                            metric,
+                            total_time,
+                            player_name=str(entry.get("name") or "unknown"),
+                            player_id=entry.get("id"),
+                            class_name=entry.get("type"),
+                            spec_name=entry.get("spec"),
+                        )
+                    )
+        else:
+            rows.extend(_parse_auras_rows(block, metric, total_time))
+
     return rows
 
 
@@ -825,6 +936,7 @@ def fetch_fight_table_raw(
             "startTime": float(start_time_ms),
             "endTime": float(end_time_ms),
             "dataType": data_type,
+            "viewBy": view_by_for_data_type(data_type),
         },
     )
     report = (data.get("reportData") or {}).get("report") or {}
