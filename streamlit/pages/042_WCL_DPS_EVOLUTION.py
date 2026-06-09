@@ -103,6 +103,7 @@ def load_dps_data(
             report_date,
             player_name,
             guild_name,
+            player_guild_name,
             dps,
             class_name,
             spec_name,
@@ -258,6 +259,7 @@ fig = px.line(
         "item_level": True,
         "outcome": True,
         "guild_name": True,
+        "player_guild_name": True,
         "player_name": False,
     },
     labels={
@@ -281,6 +283,7 @@ with st.expander("Détail des pulls"):
             "report_start_at",
             "player_name",
             "guild_name",
+            "player_guild_name",
             "boss_name",
             "dps",
             "difficulty_label",
