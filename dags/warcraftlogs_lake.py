@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 import pandas as pd
+import s3fs
 from deltalake import DeltaTable, write_deltalake
 
 from lakehouse_common import s3_storage_options
@@ -47,6 +48,28 @@ def _escape_sql_literal(value: str) -> str:
     return value.replace("'", "''")
 
 
+def _s3_fs() -> s3fs.S3FileSystem:
+    storage = s3_storage_options()
+    return s3fs.S3FileSystem(
+        key=storage["AWS_ACCESS_KEY_ID"],
+        secret=storage["AWS_SECRET_ACCESS_KEY"],
+        client_kwargs={"endpoint_url": storage["AWS_ENDPOINT_URL"]},
+    )
+
+
+def _s3_object_key(s3_uri: str) -> str:
+    return s3_uri.removeprefix("s3://")
+
+
+def _delete_delta_prefix(path: str) -> None:
+    """Supprime un préfixe Delta corrompu ou vide sur MinIO."""
+    fs = _s3_fs()
+    key = _s3_object_key(path)
+    if fs.exists(key):
+        fs.rm(key, recursive=True)
+        print(f"Delta supprimé : {key}")
+
+
 def _delta_table_exists(path: str) -> bool:
     storage = s3_storage_options()
     try:
@@ -56,8 +79,21 @@ def _delta_table_exists(path: str) -> bool:
         return False
 
 
-def read_delta_df(path: str) -> pd.DataFrame:
+def _delta_table_readable(path: str) -> bool:
     if not _delta_table_exists(path):
+        return False
+    storage = s3_storage_options()
+    try:
+        DeltaTable(path, storage_options=storage).to_pandas()
+        return True
+    except Exception as exc:
+        print(f"Delta illisible {path} : {exc}")
+        _delete_delta_prefix(path)
+        return False
+
+
+def read_delta_df(path: str) -> pd.DataFrame:
+    if not _delta_table_readable(path):
         return pd.DataFrame()
     storage = s3_storage_options()
     return DeltaTable(path, storage_options=storage).to_pandas()
@@ -146,12 +182,41 @@ def _catalog_state_row(
     }
 
 
+def write_catalog_to_delta(
+    reports: list[dict[str, Any]],
+    guild: dict[str, Any],
+    keys: dict[str, Any],
+    *,
+    attempts: int = 0,
+) -> int:
+    """Écrit tout le catalogue en ``pending`` (création / réparation ingestion_state)."""
+    rows = [
+        _catalog_state_row(report, guild, keys, attempts=attempts)
+        for report in reports
+        if report.get("code")
+    ]
+    if not rows:
+        return 0
+    df = pd.DataFrame(rows)
+    storage = s3_storage_options()
+    write_deltalake(
+        BRONZE_PATHS["ingestion_state"],
+        _prepare_delta_df(df),
+        mode="overwrite",
+        storage_options=storage,
+    )
+    return len(df)
+
+
 def bulk_upsert_catalog_state(
     reports: list[dict[str, Any]],
     guild: dict[str, Any],
     keys: dict[str, Any],
 ) -> int:
     """Catalogue API → Delta ingestion_state en une passe (évite l'épuisement TCP MinIO)."""
+    if not _delta_table_readable(BRONZE_PATHS["ingestion_state"]):
+        return write_catalog_to_delta(reports, guild, keys)
+
     df = read_delta_df(BRONZE_PATHS["ingestion_state"])
     updated = 0
 
