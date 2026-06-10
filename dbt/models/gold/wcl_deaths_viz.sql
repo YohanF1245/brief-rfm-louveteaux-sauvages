@@ -15,7 +15,7 @@ WITH {{ wcl_guild_flags_cte() }}
 SELECT
     r.report_start_at,
     toDate(r.report_start_at) AS report_date,
-    e.report_code,
+    e.report_code AS report_code,
     r.guild_name AS report_guild_name,
     r.zone_name AS raid_or_dungeon,
     f.fight_id,
