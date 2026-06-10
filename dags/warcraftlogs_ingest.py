@@ -1,9 +1,20 @@
-"""Ingestion WCL : API → bronze Delta (MinIO). ClickHouse lit le lake via deltaLake()."""
+"""Ingestion WCL : API → bronze Delta (MinIO), données BRUTES uniquement.
+
+Par report :
+  1. ``reports_raw`` + ``fights``      — métadonnées (1 appel API)
+  2. ``master_info/actors/abilities``  — masterData, mapping id → acteur (1 appel)
+  3. ``player_details``                — specs / ilvl / talents / gear (1 appel)
+  4. ``events``                        — log brut complet ``dataType: All``,
+     paginé sur TOUTE la plage du report (boss + trash + inter-pulls),
+     flush Delta par page de 10 000 events (RAM constante).
+
+Aucune table agrégée WCL (``report.table``) n'est appelée : tout est
+recalculable depuis ``events`` + ``master_actors``. Voir docs/wcl_bronze.md.
+"""
 
 from __future__ import annotations
 
 import gc
-import json
 import os
 import re
 from typing import Any
@@ -12,20 +23,28 @@ import pandas as pd
 
 from warcraftlogs_common import (
     estimated_report_cost,
+    event_rows_from_page,
     fetch_all_guild_and_member_reports,
-    fetch_fight_tables,
     fetch_report_fights,
+    fetch_report_master_data,
+    fetch_report_player_details,
     fight_rows_from_report,
     guild_url_from_env,
+    iter_report_events_pages,
+    master_data_rows,
     measure_report_points_delta,
+    player_details_rows,
     quota_allows_next_report,
     refresh_rate_limit_data,
 )
 from warcraftlogs_lake import (
     BRONZE_PATHS,
+    EVENTS_INT_COLUMNS,
+    append_rows_to_bronze,
     bulk_upsert_catalog_state,
-    export_fight_player_stats_to_bronze,
-    export_fight_tables_raw_to_bronze,
+    delete_report_rows,
+    export_master_data_to_bronze,
+    export_player_details_to_bronze,
     export_report_raw_to_bronze,
     export_report_tables_to_bronze,
     list_pending_report_codes,
@@ -89,65 +108,63 @@ def _fights_df(fight_rows: list[dict[str, Any]]) -> pd.DataFrame:
     return df
 
 
-def _stat_rows_for_fight(
-    report_code: str,
-    fight_id: int,
-    metrics: dict[str, list[dict[str, Any]]],
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for metric_rows in metrics.values():
-        for row in metric_rows:
-            rows.append(
-                {
-                    "report_code": report_code,
-                    "fight_id": fight_id,
-                    "player_name": row["player_name"],
-                    "metric": row["metric"],
-                    "player_id": row.get("player_id"),
-                    "class_name": row.get("class_name"),
-                    "spec_name": row.get("spec_name"),
-                    "total_amount": row.get("total_amount"),
-                    "active_time_ms": row.get("active_time_ms"),
-                    "rate_per_sec": row.get("rate_per_sec"),
-                    "extra": json.dumps(row.get("extra") or {}),
-                }
-            )
-    return rows
+def _report_time_range_ms(api_report: dict[str, Any]) -> float:
+    """Durée totale du report en ms (les events utilisent des times RELATIFS)."""
+    start = api_report.get("startTime")
+    end = api_report.get("endTime")
+    if start is None or end is None:
+        return 0.0
+    return max(0.0, float(end) - float(start))
 
 
 def _ingest_single_report(report_code: str) -> dict[str, int]:
-    """Pipeline complet : API → bronze Delta (commit par report)."""
+    """Pipeline complet données brutes : API → bronze Delta (commit par report)."""
     catalog = load_catalog_context(report_code)
     api_report = fetch_report_fights(report_code)
     export_report_raw_to_bronze(report_code, api_report)
 
     fight_rows = fight_rows_from_report(report_code, api_report)
-    total_stats = 0
+    range_end_ms = _report_time_range_ms(api_report)
+    print(f"  {report_code} : {len(fight_rows)} fights, plage events 0 → {int(range_end_ms)} ms.")
 
-    eligible = [
-        f
-        for f in fight_rows
-        if f.get("start_time_ms") is not None
-        and f.get("end_time_ms") is not None
-        and int(f["start_time_ms"]) < int(f["end_time_ms"])
-    ]
-    total_fights = len(eligible)
-    print(f"  {report_code} : {total_fights} fights à traiter (sur {len(fight_rows)} total).")
+    # 1) masterData : référentiel acteurs / abilities (requis pour joindre les events)
+    master = fetch_report_master_data(report_code)
+    info_row, actor_rows, ability_rows = master_data_rows(report_code, master)
+    master_counts = export_master_data_to_bronze(report_code, info_row, actor_rows, ability_rows)
+    print(
+        f"  masterData : {master_counts['master_actors']} acteurs, "
+        f"{master_counts['master_abilities']} abilities."
+    )
+    del master, actor_rows, ability_rows
+    gc.collect()
 
-    for idx, fight in enumerate(eligible, 1):
-        start_ms = int(fight["start_time_ms"])
-        end_ms = int(fight["end_time_ms"])
-        fight_id = int(fight["fight_id"])
-        fight_name = fight.get("fight_name") or f"#{fight_id}"
-        print(f"  fight {idx}/{total_fights} id={fight_id} {fight_name}")
+    # 2) playerDetails : specs / ilvl / talents / gear (toute la plage du report)
+    details_count = 0
+    if range_end_ms > 0:
+        try:
+            details_payload = fetch_report_player_details(report_code, 0.0, range_end_ms)
+            details_count = export_player_details_to_bronze(
+                report_code, player_details_rows(report_code, details_payload)
+            )
+            del details_payload
+        except Exception as exc:
+            # Non bloquant : certains reports (vides, archivés) n'ont pas de playerDetails.
+            print(f"  playerDetails indisponible : {exc}")
+    print(f"  playerDetails : {details_count} lignes joueur.")
 
-        metrics, raw_tables = fetch_fight_tables(report_code, start_ms, end_ms)
-        export_fight_tables_raw_to_bronze(report_code, fight_id, raw_tables)
-        fight_stat_rows = _stat_rows_for_fight(report_code, fight_id, metrics)
-        flushed = export_fight_player_stats_to_bronze(report_code, fight_id, fight_stat_rows)
-        total_stats += flushed
-        del metrics, raw_tables, fight_stat_rows
-        gc.collect()
+    # 3) events bruts : TOUTE la plage du report (boss + trash + inter-pulls),
+    #    dataType: All, flush Delta par page (RAM constante, reprise par report)
+    total_events = 0
+    if range_end_ms > 0:
+        delete_report_rows(BRONZE_PATHS["events"], report_code)
+        for page_index, events in iter_report_events_pages(report_code, 0.0, range_end_ms):
+            rows = event_rows_from_page(report_code, page_index, events)
+            total_events += append_rows_to_bronze(
+                BRONZE_PATHS["events"], rows, int_columns=EVENTS_INT_COLUMNS
+            )
+            print(f"  events page {page_index} : +{len(rows)} (total {total_events})")
+            del events, rows
+            gc.collect()
 
     if catalog:
         reports_df = pd.DataFrame(
@@ -179,11 +196,13 @@ def _ingest_single_report(report_code: str) -> dict[str, int]:
         reports_df,
         _fights_df(fight_rows),
     )
-    bronze_counts["fight_player_stats"] = total_stats
+    bronze_counts.update(master_counts)
+    bronze_counts["player_details"] = details_count
+    bronze_counts["events"] = total_events
 
     return {
         "fights": len(fight_rows),
-        "stats": total_stats,
+        "events": total_events,
         **{f"bronze_{k}": v for k, v in bronze_counts.items()},
     }
 
