@@ -1,33 +1,43 @@
 """
 Ingestion Warcraft Logs — guilde Nightmares Asylum (Dalaran EU).
 
-Flux API → bronze Delta (MinIO) uniquement.
-Transform bronze → ClickHouse : DAG séparé ``warcraftlogs_lakehouse_dbt``.
+Flux API → bronze Delta (MinIO), **données BRUTES uniquement** (pas de tables
+agrégées WCL). Schéma complet documenté dans ``docs/wcl_bronze.md``.
 
   1. ``sync_report_catalog`` — catalogue API → ``ingestion_state`` (Delta)
-  2. ``ingest_reports_incremental`` — par report : fights + stats → bronze Delta
-     (``fight_player_stats`` flush par fight ; ``fight_tables_raw`` idem)
+  2. ``ingest_reports_incremental`` — par report :
+     a. ``reports_raw`` + ``fights``           (métadonnées, 1 appel API)
+     b. ``master_info/actors/abilities``       (masterData, 1 appel)
+     c. ``player_details``                     (specs/ilvl/talents/gear, 1 appel)
+     d. ``events``                             (log brut ``dataType: All``,
+        paginé 10 000/page sur toute la plage du report, flush par page)
 
-Après ingest (surtout ré-ingest massif) : lancer **une fois** ``warcraftlogs_lakehouse_dbt``.
+Tout est recalculable depuis ``events`` × ``master_actors`` (joueurs, pets via
+``pet_owner_id``, NPC) × ``master_abilities`` : DPS, soins, buffs, consommables,
+morts, interrupts, … → plus jamais de ré-ingestion pour un nouveau besoin.
 
+Après ingest : lancer **une fois** ``warcraftlogs_lakehouse_dbt``.
 Roster guilde (``player_guid``) : DAG ``warcraftlogs_guild_roster`` (quotidien).
 
-Ré-ingest total (ex. buffs ``viewBy: Source``) :
-  1. reset ingestion_state → ``pending``
-  2. ``warcraftlogs_guild_nightmares`` en boucle (quota ~25/run)
-  3. **un seul** ``warcraftlogs_lakehouse_dbt`` à la fin
+Ré-ingest forcé d'un report : ``scripts/reset_wcl_ingestion.py`` (status → pending),
+le bronze du report est remplacé de façon idempotente (delete + append).
 
 Chemins bronze :
-  - ``s3://lake/bronze/warcraftlogs/guild_reports``
-  - ``s3://lake/bronze/warcraftlogs/fights``
-  - ``s3://lake/bronze/warcraftlogs/fight_player_stats``
-  - ``s3://lake/bronze/warcraftlogs/fight_tables_raw``
-  - ``s3://lake/bronze/warcraftlogs/reports_raw``
-  - ``s3://lake/bronze/warcraftlogs/ingestion_state``
+  - ``s3://lake/bronze/warcraftlogs/guild_reports``    (catalogue)
+  - ``s3://lake/bronze/warcraftlogs/fights``           (1 ligne / fight)
+  - ``s3://lake/bronze/warcraftlogs/reports_raw``      (JSON report brut)
+  - ``s3://lake/bronze/warcraftlogs/master_info``      (versions log/jeu)
+  - ``s3://lake/bronze/warcraftlogs/master_actors``    (id → joueur/pet/NPC)
+  - ``s3://lake/bronze/warcraftlogs/master_abilities`` (id → sort)
+  - ``s3://lake/bronze/warcraftlogs/player_details``   (specs, gear, talents)
+  - ``s3://lake/bronze/warcraftlogs/events``           (log brut, 1 ligne / event)
+  - ``s3://lake/bronze/warcraftlogs/ingestion_state``  (suivi ingestion)
 
 Airflow :
   - Connexion ``WCL_API`` (HTTP) : login = client_id, password = client_secret
-  - Variables : ``wcl_dag_schedule``, ``wcl_ingest_batch_size``, ``wcl_adaptive_rate_limit``, etc.
+  - Variables : ``wcl_dag_schedule``, ``wcl_ingest_batch_size``,
+    ``wcl_adaptive_rate_limit``, ``wcl_events_page_size``,
+    ``wcl_events_include_resources``, etc.
 
 MinIO / ClickHouse : réseau Docker + creds compose (pas de connexion Airflow).
 
