@@ -6,8 +6,10 @@ GUILD_NAME_LIKE = "%nightmares asylum%"
 
 
 def guild_report_clause(guild_only: bool) -> str:
-    """Filtre les logs tagués Nightmares Asylum (niveau report)."""
-    return "is_nightmares_asylum_report = 1" if guild_only else "1 = 1"
+    """Filtre les logs dont la guilde du report correspond à Nightmares Asylum."""
+    if not guild_only:
+        return "1 = 1"
+    return f"lower(coalesce(report_guild_name, '')) LIKE '{GUILD_NAME_LIKE}'"
 
 
 def guild_player_clause(guild_only: bool) -> str:
