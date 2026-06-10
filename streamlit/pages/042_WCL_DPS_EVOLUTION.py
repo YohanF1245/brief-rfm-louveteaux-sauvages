@@ -104,6 +104,7 @@ def load_dps_data(
         f"""
         SELECT
             report_start_at,
+            fight_start_at,
             report_date,
             player_name,
             report_guild_name AS guild_name,
@@ -122,13 +123,14 @@ def load_dps_data(
             report_title
         FROM {VIZ_TABLE}
         WHERE {where}
-        ORDER BY report_start_at, player_name
+        ORDER BY fight_start_at, player_name
         """
     )
     if df.empty:
         return df
 
     df["report_start_at"] = pd.to_datetime(df["report_start_at"], utc=True)
+    df["fight_start_at"] = pd.to_datetime(df["fight_start_at"], utc=True)
     df["report_date"] = pd.to_datetime(df["report_date"])
     df["dps"] = pd.to_numeric(df["dps"], errors="coerce")
     df["item_level"] = pd.to_numeric(df["item_level"], errors="coerce")
@@ -256,11 +258,12 @@ m4.metric("DPS moyen", f"{int(df['dps'].mean()):,}")
 subtitle = raid if boss_filter is None else f"{raid} — {boss_filter}"
 fig = px.line(
     df,
-    x="report_start_at",
+    x="fight_start_at",
     y="dps",
     color="player_name",
     markers=True,
     hover_data={
+        "fight_start_at": "|%Y-%m-%d %H:%M",
         "report_start_at": "|%Y-%m-%d %H:%M",
         "dps": ":,.0f",
         "boss_name": True,
@@ -274,16 +277,21 @@ fig = px.line(
         "player_name": False,
     },
     labels={
-        "report_start_at": "Date du log",
+        "fight_start_at": "Début du pull",
         "dps": "DPS",
         "player_name": "Joueur",
     },
     title=subtitle,
 )
 fig.update_layout(
-    hovermode="x unified",
+    hovermode="closest",
     legend=dict(title="Joueur"),
     height=520,
+)
+fig.update_xaxes(
+    tickformat="%d/%m %H:%M",
+    hoverformat="%Y-%m-%d %H:%M",
+    title="Date / heure du pull",
 )
 fig.update_traces(mode="lines+markers")
 st.plotly_chart(fig, use_container_width=True)
@@ -291,6 +299,7 @@ st.plotly_chart(fig, use_container_width=True)
 with st.expander("Détail des pulls"):
     show = df[
         [
+            "fight_start_at",
             "report_start_at",
             "player_name",
             "guild_name",
@@ -306,5 +315,6 @@ with st.expander("Détail des pulls"):
             "report_title",
         ]
     ].copy()
+    show["fight_start_at"] = show["fight_start_at"].dt.strftime("%Y-%m-%d %H:%M")
     show["report_start_at"] = show["report_start_at"].dt.strftime("%Y-%m-%d %H:%M")
-    st.dataframe(show.sort_values("report_start_at", ascending=False), hide_index=True)
+    st.dataframe(show.sort_values("fight_start_at", ascending=False), hide_index=True)
