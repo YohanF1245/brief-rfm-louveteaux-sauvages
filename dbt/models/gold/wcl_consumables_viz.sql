@@ -74,15 +74,25 @@ buff_uptime AS (
         max(c.state = 1 AND c.ts <= toInt64(f.start_time_ms)) AS present_at_pull,
         arrayFold(
             (acc, x) -> tuple(
-                acc.1 + if(acc.2 = 1, greatest(x.1 - acc.3, toInt64(0)), toInt64(0)),
-                x.2,
-                x.1
+                assumeNotNull(toInt64(acc.1)) + if(
+                    acc.2 = 1,
+                    greatest(
+                        assumeNotNull(toInt64(x.1)) - assumeNotNull(toInt64(acc.3)),
+                        toInt64(0)
+                    ),
+                    toInt64(0)
+                ),
+                toUInt8(x.2),
+                assumeNotNull(toInt64(x.1))
             ),
             arrayPushBack(
-                arraySort(x -> x.1, groupArray(tuple(c.ts, c.state))),
-                tuple(any(toInt64(f.end_time_ms)), toUInt8(0))
+                arraySort(
+                    x -> x.1,
+                    groupArray(tuple(assumeNotNull(toInt64(c.ts)), toUInt8(c.state)))
+                ),
+                tuple(toInt64(assumeNotNull(any(f.end_time_ms))), toUInt8(0))
             ),
-            tuple(toInt64(0), toUInt8(0), any(toInt64(f.start_time_ms)))
+            tuple(toInt64(0), toUInt8(0), toInt64(assumeNotNull(any(f.start_time_ms))))
         ).1 AS uptime_ms
     FROM (
         SELECT * FROM buff_changes

@@ -104,15 +104,15 @@ player_deaths AS (
 ),
 pull_info AS (
     SELECT
-        pc.report_code,
-        pc.fight_id,
+        pcom.report_code,
+        pcom.fight_id,
         a.resolved_player_name AS player_name,
-        any(pc.spec_id) AS spec_id,
-        any(pc.avg_item_level) AS avg_item_level
-    FROM {{ ref('wcl_pull_combatants') }} AS pc
+        any(pcom.spec_id) AS spec_id,
+        any(pcom.avg_item_level) AS avg_item_level
+    FROM {{ ref('wcl_pull_combatants') }} AS pcom
     INNER JOIN {{ ref('wcl_actors') }} AS a
-        ON pc.report_code = a.report_code AND pc.player_actor_id = a.actor_id
-    GROUP BY pc.report_code, pc.fight_id, player_name
+        ON pcom.report_code = a.report_code AND pcom.player_actor_id = a.actor_id
+    GROUP BY pcom.report_code, pcom.fight_id, a.resolved_player_name
 ),
 guild_flags AS (
     SELECT
@@ -175,10 +175,10 @@ SELECT
     round(coalesce(h.healing_done, 0) / nullIf(f.duration_sec, 0), 0) AS hps,
     coalesce(h.overheal, 0) AS overheal,
     coalesce(pd.deaths, 0) AS deaths,
-    coalesce(pc.interrupts, 0) AS interrupts,
-    coalesce(pc.dispels, 0) AS dispels,
-    coalesce(pc.potion_casts, 0) AS potion_casts,
-    coalesce(pc.healthstone_casts, 0) AS healthstone_casts,
+    coalesce(cnt.interrupts, 0) AS interrupts,
+    coalesce(cnt.dispels, 0) AS dispels,
+    coalesce(cnt.potion_casts, 0) AS potion_casts,
+    coalesce(cnt.healthstone_casts, 0) AS healthstone_casts,
     now() AS _gold_loaded_at
 FROM fight_players AS fp
 INNER JOIN {{ ref('wcl_fights') }} AS f
@@ -193,8 +193,8 @@ LEFT JOIN player_damage_taken AS dt
     ON fp.report_code = dt.report_code AND fp.fight_id = dt.fight_id AND fp.player_name = dt.player_name
 LEFT JOIN player_healing AS h
     ON fp.report_code = h.report_code AND fp.fight_id = h.fight_id AND fp.player_name = h.player_name
-LEFT JOIN player_counters AS pc
-    ON fp.report_code = pc.report_code AND fp.fight_id = pc.fight_id AND fp.player_name = pc.player_name
+LEFT JOIN player_counters AS cnt
+    ON fp.report_code = cnt.report_code AND fp.fight_id = cnt.fight_id AND fp.player_name = cnt.player_name
 LEFT JOIN player_deaths AS pd
     ON fp.report_code = pd.report_code AND fp.fight_id = pd.fight_id AND fp.player_name = pd.player_name
 LEFT JOIN pull_info AS pi
