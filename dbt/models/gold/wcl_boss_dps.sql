@@ -1,10 +1,14 @@
 {{ config(
+    enabled=false,
     materialized='table',
     schema='gold',
     tags=['warcraftlogs', 'gold', 'power_bi']
 ) }}
 
 /*
+  OBSOLÈTE (enabled=false) : dépendait de wcl_player_fight_metrics (supprimé).
+  À reconstruire depuis bronze ``events`` (type=damage) × ``master_actors``.
+
   Gold WCL : DPS boss, grain joueur × fight × report.
   Jointure roster via ``player_guid`` (composition.summary.guid ↔ API guild.members).
 */
