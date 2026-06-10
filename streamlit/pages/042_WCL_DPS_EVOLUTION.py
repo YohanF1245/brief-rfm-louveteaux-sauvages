@@ -1,4 +1,4 @@
-"""Évolution DPS multi-joueurs par raid / donjon (gold.wcl_player_dps_viz)."""
+"""Évolution DPS multi-joueurs par raid / donjon (gold.wcl_fight_player_perf_viz)."""
 
 from __future__ import annotations
 
@@ -10,12 +10,15 @@ from ch_utils import _esc, ch_query, ch_scalar
 from wcl_guild_filters import guild_player_clause, guild_report_clause
 from wcl_streamlit_helpers import column_values
 
-VIZ_TABLE = "wcl_player_dps_viz"
+VIZ_TABLE = "wcl_fight_player_perf_viz"
 
 st.set_page_config(page_title="WCL — Évolution DPS", layout="wide")
 
 st.title("Warcraft Logs — Évolution DPS")
-st.caption(f"Source : `gold.{VIZ_TABLE}` — DAG `warcraftlogs_guild_nightmares` ou `warcraftlogs_lakehouse_dbt`.")
+st.caption(
+    f"Source : `gold.{VIZ_TABLE}` — pipeline "
+    "`warcraftlogs_guild_nightmares` → `warcraftlogs_silver` → `warcraftlogs_gold`."
+)
 
 
 @st.cache_data(ttl=120)
@@ -94,7 +97,7 @@ def load_dps_data(
         levels = ", ".join(str(int(k)) for k in keystone_levels)
         filters.append(f"keystone_level IN ({levels})")
     if kills_only:
-        filters.append("outcome = 'kill'")
+        filters.append("is_kill = 1")
 
     where = " AND ".join(filters)
     df = ch_query(
@@ -103,19 +106,19 @@ def load_dps_data(
             report_start_at,
             report_date,
             player_name,
-            guild_name,
+            report_guild_name AS guild_name,
             player_guild_name,
             dps,
             class_name,
-            spec_name,
-            item_level,
+            toString(spec_id) AS spec_name,
+            avg_item_level AS item_level,
             raid_or_dungeon,
             boss_name,
             difficulty_label,
             keystone_level,
             content_type,
-            outcome,
-            duration_sec,
+            if(is_kill = 1, 'kill', 'wipe') AS outcome,
+            fight_duration_sec AS duration_sec,
             report_title
         FROM {VIZ_TABLE}
         WHERE {where}
@@ -142,7 +145,7 @@ except RuntimeError as exc:
 if row_count == 0:
     st.warning(
         f"La table `gold.{VIZ_TABLE}` est vide. "
-        "Lance le DAG **warcraftlogs_lakehouse_dbt** (silver + gold) dans Airflow."
+        "Lance **warcraftlogs_silver** puis **warcraftlogs_gold** dans Airflow."
     )
     st.stop()
 
@@ -157,7 +160,7 @@ if not raids:
         st.warning(
             "Des lignes existent dans la table gold, mais aucun raid ne correspond au filtre "
             "**membres guilde** (`is_guild_member = 1`). "
-            "Décoche « Nightmares Asylum » ou lance **warcraftlogs_guild_roster** + **lakehouse_dbt**."
+            "Décoche « Nightmares Asylum » ou lance **warcraftlogs_guild_roster** + **warcraftlogs_silver**."
         )
     else:
         st.info("Aucun raid / donjon pour ce filtre.")
@@ -221,7 +224,7 @@ players_selected = st.multiselect(
     cohort,
     default=cohort,
     help=(
-        "Par défaut : joueurs du roster guilde (logs officiels WCL) ayant au moins un pull "
+        "Par défaut : joueurs du roster guilde ayant au moins un pull "
         "dans ce contenu. Décoche « Nightmares Asylum » pour inclure les logs perso / M+."
     ),
 )
