@@ -20,11 +20,12 @@
   rebuild complet depuis Delta deviendra trop long.
 */
 SELECT
-    report_code,
-    -- 0 = hors fight (clé de tri MergeTree : non nullable obligatoire)
+    -- Clé de tri MergeTree : non nullable obligatoire (deltaLake() expose
+    -- les colonnes en Nullable). fight_id 0 = hors fight.
+    assumeNotNull(report_code) AS report_code,
     coalesce(toInt32OrNull(toString(fight_id)), 0) AS fight_id,
-    toInt64(timestamp_ms) AS timestamp_ms,
-    event_type,
+    assumeNotNull(toInt64(timestamp_ms)) AS timestamp_ms,
+    assumeNotNull(event_type) AS event_type,
     toInt32OrNull(toString(source_id)) AS source_id,
     toInt32OrNull(toString(source_instance)) AS source_instance,
     toInt32OrNull(toString(target_id)) AS target_id,

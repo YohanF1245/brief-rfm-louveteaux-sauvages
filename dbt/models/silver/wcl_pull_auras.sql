@@ -30,5 +30,7 @@ FROM deltaLake(
     '{{ env_var("MINIO_ROOT_USER", "minioadmin") }}',
     '{{ env_var("MINIO_ROOT_PASSWORD", "minioadmin") }}'
 )
-ARRAY JOIN JSONExtractArrayRaw(event_json, 'auras') AS aura
+-- assumeNotNull : event_json est Nullable(String) via deltaLake(), et
+-- ClickHouse interdit Nullable(Array(...)) en sortie de JSONExtractArrayRaw
+ARRAY JOIN JSONExtractArrayRaw(assumeNotNull(event_json), 'auras') AS aura
 WHERE event_type = 'combatantinfo'

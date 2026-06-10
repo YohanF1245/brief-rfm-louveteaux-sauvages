@@ -17,12 +17,14 @@ WITH raw AS (
         toInt64(timestamp_ms) AS pull_timestamp_ms,
         JSONExtract(event_json, 'specID', 'Nullable(Int32)') AS spec_id,
         JSONExtract(event_json, 'faction', 'Nullable(Int32)') AS faction,
-        -- ilvl > 1 : exclut les slots vides (0) et chemise/tabard (ilvl 1)
+        -- ilvl > 1 : exclut les slots vides (0) et chemise/tabard (ilvl 1).
+        -- assumeNotNull : event_json est Nullable via deltaLake(), et
+        -- ClickHouse interdit Nullable(Array(...)) en sortie de JSONExtract.
         arrayFilter(
             x -> x > 1,
-            JSONExtract(event_json, 'gear', 'Array(Tuple(itemLevel Int64))').itemLevel
+            JSONExtract(assumeNotNull(event_json), 'gear', 'Array(Tuple(itemLevel Int64))').itemLevel
         ) AS gear_ilvls,
-        length(JSONExtractArrayRaw(event_json, 'auras')) AS auras_count,
+        length(JSONExtractArrayRaw(assumeNotNull(event_json), 'auras')) AS auras_count,
         toDateTime64(fetched_at, 3, 'UTC') AS bronze_fetched_at
     FROM deltaLake(
         'http://minio:9000/lake/bronze/warcraftlogs/events',
