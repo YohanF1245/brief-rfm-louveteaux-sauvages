@@ -1,10 +1,16 @@
 {{ config(
+    enabled=false,
     materialized='table',
     schema='gold',
     tags=['warcraftlogs', 'gold', 'power_bi']
 ) }}
 
 /*
+  OBSOLÈTE (enabled=false) : dépendait de wcl_player_fight_metrics (supprimé,
+  buffs sans résolution joueur). À reconstruire depuis bronze ``events``
+  (applybuff/removebuff + cast) × ``master_actors`` — résolution joueur garantie.
+  Conserver : la classification regex food/flask/oil/potion reste valable.
+
   Gold consommables raid : uptime food / flacon / huile + potions en combat boss.
   Résolution joueur via ``player_guid`` (summary) + roster API.
 */
