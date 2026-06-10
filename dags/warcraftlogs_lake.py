@@ -13,15 +13,62 @@ from lakehouse_common import s3_storage_options
 
 BRONZE_BASE = "s3://lake/bronze/warcraftlogs"
 
+# Tables bronze "données brutes" — voir docs/wcl_bronze.md pour le schéma complet.
 BRONZE_PATHS = {
+    # Catalogue + métadonnées (1 ligne / report, 1 ligne / fight)
     "guild_reports": f"{BRONZE_BASE}/guild_reports",
     "guild_roster": f"{BRONZE_BASE}/guild_roster",
     "fights": f"{BRONZE_BASE}/fights",
-    "fight_player_stats": f"{BRONZE_BASE}/fight_player_stats",
-    "fight_tables_raw": f"{BRONZE_BASE}/fight_tables_raw",
     "reports_raw": f"{BRONZE_BASE}/reports_raw",
     "ingestion_state": f"{BRONZE_BASE}/ingestion_state",
+    # masterData : référentiel id → acteur / ability (jointures events)
+    "master_info": f"{BRONZE_BASE}/master_info",
+    "master_actors": f"{BRONZE_BASE}/master_actors",
+    "master_abilities": f"{BRONZE_BASE}/master_abilities",
+    # playerDetails : specs / ilvl / talents / gear par joueur
+    "player_details": f"{BRONZE_BASE}/player_details",
+    # events : log brut complet (dataType: All), 1 ligne = 1 event
+    "events": f"{BRONZE_BASE}/events",
 }
+
+
+# Colonnes entières nullables : typage explicite Int64 AVANT écriture Delta.
+# Sans ça, une page/report où la colonne est 100 % NULL serait inférée "string"
+# et entrerait en conflit de schéma avec les appends suivants (Int64).
+EVENTS_INT_COLUMNS: tuple[str, ...] = (
+    "fight_id",
+    "page_index",
+    "event_index",
+    "timestamp_ms",
+    "source_id",
+    "source_instance",
+    "target_id",
+    "target_instance",
+    "ability_game_id",
+)
+ACTORS_INT_COLUMNS: tuple[str, ...] = ("actor_id", "game_id", "pet_owner_id")
+ABILITIES_INT_COLUMNS: tuple[str, ...] = ("ability_game_id",)
+MASTER_INFO_INT_COLUMNS: tuple[str, ...] = (
+    "log_version",
+    "game_version",
+    "actors_count",
+    "abilities_count",
+)
+PLAYER_DETAILS_INT_COLUMNS: tuple[str, ...] = (
+    "player_id",
+    "player_guid",
+    "min_item_level",
+    "max_item_level",
+    "potion_use",
+    "healthstone_use",
+)
+
+
+def _coerce_int64(df: pd.DataFrame, columns: tuple[str, ...]) -> pd.DataFrame:
+    for col in columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+    return df
 
 
 def _prepare_delta_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -413,49 +460,85 @@ def export_report_raw_to_bronze(report_code: str, raw_payload: dict[str, Any]) -
     return replace_report_in_bronze(BRONZE_PATHS["reports_raw"], row, report_code)
 
 
-def export_fight_player_stats_to_bronze(
-    report_code: str,
-    fight_id: int,
-    stat_rows: list[dict[str, Any]],
-) -> int:
-    """Bronze stats parsées : flush par fight (évite d'accumuler tout le report en RAM)."""
-    if not stat_rows:
-        return 0
-    df = pd.DataFrame(stat_rows)
-    df["fetched_at"] = pd.Timestamp.utcnow()
-    return replace_report_in_bronze(
-        BRONZE_PATHS["fight_player_stats"],
-        df,
-        report_code,
-        fight_id=fight_id,
-    )
+def delete_report_rows(path: str, report_code: str) -> None:
+    """Supprime les lignes d'un report dans une table Delta (idempotence ré-ingest).
+
+    À appeler AVANT un flux d'appends paginés (events) : delete une fois,
+    puis append page par page sans relire la table.
+    """
+    if not _delta_table_exists(path):
+        return
+    storage = s3_storage_options()
+    safe_code = _escape_sql_literal(report_code)
+    DeltaTable(path, storage_options=storage).delete(f"report_code = '{safe_code}'")
 
 
-def export_fight_tables_raw_to_bronze(
-    report_code: str,
-    fight_id: int,
-    raw_by_type: dict[str, Any],
+def append_rows_to_bronze(
+    path: str,
+    rows: list[dict[str, Any]],
+    *,
+    int_columns: tuple[str, ...] = (),
 ) -> int:
-    """Bronze JSON brut : toutes les tables API par fight et TableDataType."""
-    rows = []
-    for data_type, payload in raw_by_type.items():
-        rows.append(
-            {
-                "report_code": report_code,
-                "fight_id": fight_id,
-                "data_type": data_type,
-                "raw_json": json.dumps(payload, ensure_ascii=False),
-                "fetched_at": pd.Timestamp.utcnow(),
-            }
-        )
+    """Append brut de lignes dans une table Delta (création si absente)."""
     if not rows:
         return 0
-    return replace_report_in_bronze(
-        BRONZE_PATHS["fight_tables_raw"],
-        pd.DataFrame(rows),
-        report_code,
-        fight_id=fight_id,
+    df = pd.DataFrame(rows)
+    df["fetched_at"] = pd.Timestamp.utcnow()
+    df = _coerce_int64(df, int_columns)
+    prepared = _prepare_delta_df(df)
+    storage = s3_storage_options()
+    exists = _delta_table_exists(path)
+    write_deltalake(
+        path,
+        prepared,
+        mode="append" if exists else "overwrite",
+        schema_mode="merge" if exists else "overwrite",
+        storage_options=storage,
     )
+    return len(prepared)
+
+
+def export_master_data_to_bronze(
+    report_code: str,
+    info_row: dict[str, Any],
+    actor_rows: list[dict[str, Any]],
+    ability_rows: list[dict[str, Any]],
+) -> dict[str, int]:
+    """Bronze masterData : info report + acteurs + abilities (remplace le report)."""
+    info_df = _coerce_int64(pd.DataFrame([info_row]), MASTER_INFO_INT_COLUMNS)
+    info_df["fetched_at"] = pd.Timestamp.utcnow()
+    counts = {
+        "master_info": replace_report_in_bronze(
+            BRONZE_PATHS["master_info"], info_df, report_code
+        ),
+        "master_actors": 0,
+        "master_abilities": 0,
+    }
+    if actor_rows:
+        actors_df = _coerce_int64(pd.DataFrame(actor_rows), ACTORS_INT_COLUMNS)
+        actors_df["fetched_at"] = pd.Timestamp.utcnow()
+        counts["master_actors"] = replace_report_in_bronze(
+            BRONZE_PATHS["master_actors"], actors_df, report_code
+        )
+    if ability_rows:
+        abilities_df = _coerce_int64(pd.DataFrame(ability_rows), ABILITIES_INT_COLUMNS)
+        abilities_df["fetched_at"] = pd.Timestamp.utcnow()
+        counts["master_abilities"] = replace_report_in_bronze(
+            BRONZE_PATHS["master_abilities"], abilities_df, report_code
+        )
+    return counts
+
+
+def export_player_details_to_bronze(
+    report_code: str,
+    rows: list[dict[str, Any]],
+) -> int:
+    """Bronze playerDetails : 1 ligne / joueur / rôle (remplace le report)."""
+    if not rows:
+        return 0
+    df = _coerce_int64(pd.DataFrame(rows), PLAYER_DETAILS_INT_COLUMNS)
+    df["fetched_at"] = pd.Timestamp.utcnow()
+    return replace_report_in_bronze(BRONZE_PATHS["player_details"], df, report_code)
 
 
 def export_report_tables_to_bronze(
