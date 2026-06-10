@@ -47,11 +47,7 @@ LEFT JOIN {{ ref('wcl_abilities') }} AS ab
     ON e.report_code = ab.report_code AND e.ability_game_id = ab.ability_game_id
 LEFT JOIN {{ ref('wcl_actors') }} AS killer
     ON e.report_code = killer.report_code AND e.killer_id = killer.actor_id
-LEFT JOIN (
-    SELECT report_code, player_name, max(is_guild_member) AS is_guild_member
-    FROM {{ ref('wcl_player_details') }}
-    GROUP BY report_code, player_name
-) AS gf
+LEFT JOIN {{ ref('wcl_player_guild_flags') }} AS gf
     ON e.report_code = gf.report_code AND a.resolved_player_name = gf.player_name
 WHERE e.event_type = 'death'
   AND a.resolved_actor_type = 'Player'

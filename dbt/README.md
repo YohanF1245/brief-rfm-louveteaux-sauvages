@@ -10,7 +10,8 @@ dans `docs/wcl_silver_gold.md` :
 
 - **silver** : `wcl_reports`, `wcl_fights`, `wcl_actors` (pets résolus),
   `wcl_abilities`, `wcl_events` (fait central MergeTree), `wcl_pull_combatants`,
-  `wcl_pull_auras`, `wcl_player_details`, `wcl_guild_roster`, `wcl_ingestion_state`
+  `wcl_pull_auras`, `wcl_player_details`, `wcl_player_guild_flags`, `wcl_guild_roster`,
+  `wcl_ingestion_state`
 - **gold** (KPI) : `wcl_fight_player_perf_viz`, `wcl_damage_taken_viz`,
   `wcl_consumables_viz`, `wcl_deaths_viz`, `wcl_raid_nights_viz`,
   `wcl_attendance_viz`

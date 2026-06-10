@@ -48,11 +48,7 @@ INNER JOIN {{ ref('wcl_fights') }} AS f
     ON e.report_code = f.report_code AND e.fight_id = f.fight_id
 INNER JOIN {{ ref('wcl_reports') }} AS r
     ON e.report_code = r.report_code
-LEFT JOIN (
-    SELECT report_code, player_name, max(is_guild_member) AS is_guild_member
-    FROM {{ ref('wcl_player_details') }}
-    GROUP BY report_code, player_name
-) AS gf
+LEFT JOIN {{ ref('wcl_player_guild_flags') }} AS gf
     ON e.report_code = gf.report_code AND tgt.resolved_player_name = gf.player_name
 WHERE e.event_type = 'damage'
   AND tgt.resolved_actor_type = 'Player'

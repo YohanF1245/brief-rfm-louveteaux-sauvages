@@ -6,7 +6,12 @@
 
 /*
   Joueurs d'un report (``playerDetails`` API) + flag membre de guilde.
-  ``player_guid`` = GUID WoW persistant → jointure ``wcl_guild_roster``.
+
+  Jointure roster multi-clés (``LEFT ANY JOIN`` = 1 match max) :
+  - ``player_guid`` = ``canonical_id`` ou ``player_guid`` roster
+  - ``player_id`` = ``wcl_character_id`` roster (si canonicalID absent côté API)
+  - ``player_name`` + ``server`` (fallback homonymes rares sur même royaume)
+
   Le détail talents/gear/stats reste en bronze (``combatant_info_json``).
 */
 SELECT
@@ -26,7 +31,7 @@ SELECT
     gr.character_name AS roster_character_name,
     gr.guild_name AS player_guild_name,
     gr.guild_rank,
-    if(gr.player_guid IS NOT NULL, 1, 0) AS is_guild_member,
+    if(gr.character_name IS NOT NULL AND gr.character_name != '', 1, 0) AS is_guild_member,
     toDateTime64(pd.fetched_at, 3, 'UTC') AS bronze_fetched_at,
     now() AS _silver_loaded_at
 FROM deltaLake(
@@ -34,5 +39,5 @@ FROM deltaLake(
     '{{ env_var("MINIO_ROOT_USER", "minioadmin") }}',
     '{{ env_var("MINIO_ROOT_PASSWORD", "minioadmin") }}'
 ) AS pd
-LEFT JOIN {{ ref('wcl_guild_roster') }} AS gr
-    ON toUInt64OrNull(toString(pd.player_guid)) = gr.player_guid
+LEFT ANY JOIN {{ ref('wcl_guild_roster') }} AS gr
+    ON {{ wcl_roster_match_player_details('pd', 'gr') }}

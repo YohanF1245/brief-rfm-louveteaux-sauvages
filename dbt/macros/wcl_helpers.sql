@@ -9,7 +9,42 @@
 
   wcl_difficulty_label(difficulty_expr, keystone_expr)
     Libellé lisible de la difficulté WoW.
+
+  wcl_roster_match_player_details(pd_alias, gr_alias)
+    Jointure roster pour bronze/silver player_details (GUID, id WCL, nom+serveur).
+
+  wcl_roster_match_actors(a_alias, gr_alias)
+    Jointure roster pour silver wcl_actors (game_id, actor_id, nom+serveur).
 #}
+
+{% macro wcl_roster_match_player_details(pd_alias, gr_alias) -%}
+(
+    toUInt64OrNull(toString({{ pd_alias }}.player_guid)) = {{ gr_alias }}.player_guid
+    OR toUInt64OrNull(toString({{ pd_alias }}.player_guid)) = {{ gr_alias }}.canonical_id
+    OR toInt64OrNull(toString({{ pd_alias }}.player_id)) = {{ gr_alias }}.wcl_character_id
+    OR (
+        lower(trim({{ pd_alias }}.player_name)) = lower(trim({{ gr_alias }}.character_name))
+        AND lower(trim({{ pd_alias }}.server)) = lower(trim({{ gr_alias }}.server_slug))
+        AND {{ pd_alias }}.player_name != ''
+    )
+)
+{%- endmacro %}
+
+{% macro wcl_roster_match_actors(a_alias, gr_alias) -%}
+(
+    {{ a_alias }}.player_guid = {{ gr_alias }}.player_guid
+    OR {{ a_alias }}.player_guid = {{ gr_alias }}.canonical_id
+    OR (
+        {{ a_alias }}.resolved_actor_type = 'Player'
+        AND {{ a_alias }}.actor_id = {{ gr_alias }}.wcl_character_id
+    )
+    OR (
+        lower(trim({{ a_alias }}.resolved_player_name)) = lower(trim({{ gr_alias }}.character_name))
+        AND lower(trim({{ a_alias }}.server)) = lower(trim({{ gr_alias }}.server_slug))
+        AND {{ a_alias }}.resolved_player_name != ''
+    )
+)
+{%- endmacro %}
 
 {% macro wcl_consumable_type(name_expr) -%}
 {%- set expr = "coalesce(" ~ name_expr ~ ", '')" -%}

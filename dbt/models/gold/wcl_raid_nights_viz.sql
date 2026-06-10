@@ -29,7 +29,13 @@ roster_stats AS (
     SELECT
         report_code,
         uniqExact(player_name) AS players_total,
-        uniqExactIf(player_name, is_guild_member = 1) AS players_guild,
+        uniqExactIf(player_name, is_guild_member = 1) AS players_guild
+    FROM {{ ref('wcl_player_guild_flags') }}
+    GROUP BY report_code
+),
+ilvl_stats AS (
+    SELECT
+        report_code,
         round(avg(max_item_level), 1) AS avg_max_item_level
     FROM {{ ref('wcl_player_details') }}
     GROUP BY report_code
@@ -55,8 +61,9 @@ SELECT
     round(100.0 * fs.boss_kills / nullIf(fs.boss_pulls, 0), 1) AS boss_kill_rate_pct,
     rs.players_total,
     rs.players_guild,
-    rs.avg_max_item_level,
+    il.avg_max_item_level,
     now() AS _gold_loaded_at
 FROM {{ ref('wcl_reports') }} AS r
 INNER JOIN fight_stats AS fs ON r.report_code = fs.report_code
 LEFT JOIN roster_stats AS rs ON r.report_code = rs.report_code
+LEFT JOIN ilvl_stats AS il ON r.report_code = il.report_code
