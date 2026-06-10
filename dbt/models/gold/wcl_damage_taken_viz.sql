@@ -11,20 +11,20 @@
 */
 WITH {{ wcl_guild_flags_cte() }}
 SELECT
-    r.report_start_at,
+    r.report_start_at AS report_start_at,
     toDate(r.report_start_at) AS report_date,
     r.report_code AS report_code,
     r.guild_name AS report_guild_name,
     r.zone_name AS raid_or_dungeon,
-    f.fight_id,
+    f.fight_id AS fight_id,
     f.fight_name AS boss_name,
-    f.is_boss,
-    f.is_kill,
+    f.is_boss AS is_boss,
+    f.is_kill AS is_kill,
     {{ wcl_difficulty_label('f.difficulty', 'f.keystone_level') }} AS difficulty_label,
-    f.keystone_level,
+    f.keystone_level AS keystone_level,
     f.duration_sec AS fight_duration_sec,
     tgt.resolved_player_name AS player_name,
-    tgt.player_guid,
+    tgt.player_guid AS player_guid,
     tgt.resolved_class AS class_name,
     coalesce(gf.is_guild_member, 0) AS is_guild_member,
     coalesce(src.name, '(inconnu)') AS source_name,
@@ -55,8 +55,8 @@ WHERE e.event_type = 'damage'
   AND tgt.resolved_actor_type = 'Player'
   AND f.duration_sec > 0
 GROUP BY
-    r.report_start_at, report_date, report_code, report_guild_name,
-    raid_or_dungeon, f.fight_id, boss_name, f.is_boss, f.is_kill,
-    difficulty_label, f.keystone_level, fight_duration_sec,
-    player_name, tgt.player_guid, class_name, is_guild_member,
+    report_start_at, report_date, report_code, report_guild_name,
+    raid_or_dungeon, fight_id, boss_name, is_boss, is_kill,
+    difficulty_label, keystone_level, fight_duration_sec,
+    player_name, player_guid, class_name, is_guild_member,
     source_name, source_type, ability_name

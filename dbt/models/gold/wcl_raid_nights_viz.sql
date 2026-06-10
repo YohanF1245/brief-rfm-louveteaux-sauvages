@@ -42,7 +42,7 @@ ilvl_stats AS (
     GROUP BY report_code
 )
 SELECT
-    r.report_start_at,
+    r.report_start_at AS report_start_at,
     toDate(r.report_start_at) AS report_date,
     r.report_code AS report_code,
     r.title AS report_title,

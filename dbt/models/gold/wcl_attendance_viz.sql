@@ -37,16 +37,16 @@ participation AS (
     WHERE player_guid IS NOT NULL
 )
 SELECT
-    rep.report_start_at,
-    rep.report_date,
+    rep.report_start_at AS report_start_at,
+    rep.report_date AS report_date,
     rep.report_code AS report_code,
-    rep.report_title,
-    rep.raid_or_dungeon,
-    rep.report_guild_name,
-    ros.player_guid,
+    rep.report_title AS report_title,
+    rep.raid_or_dungeon AS raid_or_dungeon,
+    rep.report_guild_name AS report_guild_name,
+    ros.player_guid AS player_guid,
     ros.character_name AS character_name,
-    ros.class_name,
-    ros.guild_rank,
+    ros.class_name AS class_name,
+    ros.guild_rank AS guild_rank,
     if(p.player_guid IS NOT NULL, 1, 0) AS attended,
     now() AS _gold_loaded_at
 FROM reports AS rep

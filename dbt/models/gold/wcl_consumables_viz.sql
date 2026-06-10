@@ -141,20 +141,20 @@ unioned AS (
     FROM cast_counts
 )
 SELECT
-    r.report_start_at,
+    r.report_start_at AS report_start_at,
     toDate(r.report_start_at) AS report_date,
     u.report_code AS report_code,
     r.guild_name AS report_guild_name,
     r.zone_name AS raid_or_dungeon,
-    f.fight_id,
+    f.fight_id AS fight_id,
     f.fight_name AS boss_name,
-    f.is_boss,
-    f.is_kill,
+    f.is_boss AS is_boss,
+    f.is_kill AS is_kill,
     {{ wcl_difficulty_label('f.difficulty', 'f.keystone_level') }} AS difficulty_label,
-    f.keystone_level,
+    f.keystone_level AS keystone_level,
     f.duration_sec AS fight_duration_sec,
     a.resolved_player_name AS player_name,
-    a.player_guid,
+    a.player_guid AS player_guid,
     a.resolved_class AS class_name,
     coalesce(gf.is_guild_member, 0) AS is_guild_member,
     u.consumable_type AS consumable_type,
@@ -162,7 +162,7 @@ SELECT
     toUInt8(u.present_at_pull) AS present_at_pull,
     round(u.uptime_ms / 1000.0, 1) AS uptime_sec,
     round(100.0 * u.uptime_ms / nullIf(f.duration_ms, 0), 1) AS uptime_pct,
-    u.casts,
+    u.casts AS casts,
     now() AS _gold_loaded_at
 FROM unioned AS u
 INNER JOIN {{ ref('wcl_fights') }} AS f
