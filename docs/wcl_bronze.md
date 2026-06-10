@@ -26,7 +26,7 @@ guild { members }          ──────────►  guild_roster    (D
 - **DAG ingestion** : `warcraftlogs_guild_nightmares`
   (`sync_report_catalog` → `ingest_reports_incremental`)
 - **DAG roster** : `warcraftlogs_guild_roster`
-- **DAG dbt** : `warcraftlogs_lakehouse_dbt` (silver/gold — gold events à reconstruire)
+- **DAGs dbt** : `warcraftlogs_silver` / `warcraftlogs_gold` (déclenchés par assets, cf. `wcl_silver_gold.md`)
 - **Code** : `dags/warcraftlogs_common.py` (API), `dags/warcraftlogs_lake.py`
   (Delta), `dags/warcraftlogs_ingest.py` (orchestration par report)
 
@@ -238,7 +238,8 @@ Reset pour ré-ingest : `scripts/reset_wcl_ingestion.py`.
 
 1 ligne = 1 membre : `player_guid` (= `canonicalID`), `character_name`,
 `class_id`/`class_name`, `guild_rank`, `character_level`, serveur/région.
-Jointure : `player_details.player_guid = guild_roster.player_guid`.
+Jointure silver (multi-clés) : GUID log = `canonical_id` / `player_guid` roster,
+ou `player_id` = `wcl_character_id`, ou nom+serveur — cf. `docs/wcl_silver_gold.md`.
 
 ---
 
@@ -300,11 +301,11 @@ WHERE e.event_type = 'combatantinfo';
 
 Setup des vues `v_wcl_*` : `clickhouse/queries/00_setup_views.sql`.
 
-## TODO aval (hors bronze)
+## Aval (silver / gold)
 
-- Silver dbt : `wcl_events` typé + dédupliqué, `wcl_actors`, agrégats
-  (DPS/HPS, uptime buffs par fenêtres apply/remove).
-- Gold dbt : reconstruire `wcl_player_dps_viz` / `wcl_raid_consumables_viz`
-  depuis events (les anciens modèles sont conservés en `enabled=false`
-  comme référence de logique métier).
-- Streamlit : repointer les pages 042/043 vers les nouvelles tables gold.
+Couches silver et gold construites sur ce bronze : voir
+[`wcl_silver_gold.md`](wcl_silver_gold.md) (modèles dbt, KPI, DAGs
+`warcraftlogs_silver` / `warcraftlogs_gold` déclenchés par assets).
+
+Reste à faire : repointer les pages Streamlit 042/043 vers
+`gold.wcl_fight_player_perf_viz` / `gold.wcl_consumables_viz`.
