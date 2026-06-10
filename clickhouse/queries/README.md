@@ -7,6 +7,7 @@
 3. Toutes les autres requêtes utilisent les vues `v_wcl_*` (plus de creds)
 
 Schéma bronze complet : `docs/wcl_bronze.md`.
+Couches silver/gold (dbt) : `docs/wcl_silver_gold.md` — vérification via `test_wcl_silver.sql`.
 
 ## Vues (bronze données brutes)
 
@@ -29,16 +30,17 @@ Schéma bronze complet : `docs/wcl_bronze.md`.
 |---------|--------|
 | `00_setup_views.sql` | **Setup creds MinIO → vues** |
 | `wcl_bronze_discovery.sql` | Volumétrie + exploration du bronze brut |
-| `test_wcl.sql` | Smoke test |
+| `test_wcl.sql` | Smoke test bronze |
+| `test_wcl_silver.sql` | Vérification silver/gold (post-DAGs dbt) |
 
 ### Legacy (ancien bronze agrégé — à réécrire sur `v_wcl_events`)
 
-`00_examples_views.sql`, `test_wcl_bronze.sql`, `test_wcl_silver.sql`,
+`00_examples_views.sql`, `test_wcl_bronze.sql`,
 `top_dps_wcl.sql`, `wcl_kimahri.sql`, `wcl_raid_bosses.sql`,
 `wcl_mythic_plus.sql`, `wcl_healing_deaths.sql`, `wcl_roster_timeline.sql`,
 `wcl_report_deep_dive.sql`, `wcl_metrics_advanced.sql`, `wcl_silver_dps.sql` :
 ces requêtes référencent `v_wcl_fight_player_stats` / `silver.wcl_player_fight_metrics`
-(tables agrégées supprimées). Exemples de réécriture events : `docs/wcl_bronze.md` §
-« Recalculer les métriques ».
+(tables agrégées supprimées). Les équivalents sont maintenant les tables
+`gold.wcl_*_viz` (cf. `docs/wcl_silver_gold.md`).
 
 Un `SELECT` à la fois dans Play.
