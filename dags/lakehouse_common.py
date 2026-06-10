@@ -19,7 +19,7 @@ DBT_RUNTIME_DIR = Path(os.environ.get("DBT_RUNTIME_DIR", "/opt/airflow/logs/dbt"
 WCL_DBT_SILVER = (
     "wcl_reports wcl_fights wcl_ingestion_state wcl_guild_roster "
     "wcl_actors wcl_abilities wcl_events wcl_pull_combatants wcl_pull_auras "
-    "wcl_player_details"
+    "wcl_player_details wcl_player_guild_flags"
 )
 WCL_DBT_GOLD = (
     "wcl_fight_player_perf_viz wcl_damage_taken_viz wcl_consumables_viz "
@@ -186,6 +186,7 @@ def _assert_wcl_models_on_disk() -> None:
         "wcl_pull_combatants.sql",
         "wcl_pull_auras.sql",
         "wcl_player_details.sql",
+        "wcl_player_guild_flags.sql",
     ]
     silver_dir = DBT_DIR / "models" / "silver"
     gold_dir = DBT_DIR / "models" / "gold"
