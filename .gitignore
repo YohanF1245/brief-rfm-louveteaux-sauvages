@@ -52,3 +52,14 @@ analysis.json
 avis_verifie.html
 
 reviews.json
+
+# Fichiers locaux non commités (ignorés explicitement)
+.env.dev
+.env.example2
+.env.dev.example
+clickhouse/queries/test_wcl_silver.sql
+dags/data/climat_data.db
+dags/data/raw/.~lock.online_retail_II.xlsx#
+streamlit/.streamlit/secrets.toml.example
+streamlit/pages/Untitled
+streamlit/se
