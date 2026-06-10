@@ -143,7 +143,7 @@ unioned AS (
 SELECT
     r.report_start_at,
     toDate(r.report_start_at) AS report_date,
-    u.report_code,
+    u.report_code AS report_code,
     r.guild_name AS report_guild_name,
     r.zone_name AS raid_or_dungeon,
     f.fight_id,
@@ -157,7 +157,7 @@ SELECT
     a.player_guid,
     a.resolved_class AS class_name,
     coalesce(gf.is_guild_member, 0) AS is_guild_member,
-    u.consumable_type,
+    u.consumable_type AS consumable_type,
     u.ability_name AS consumable_name,
     toUInt8(u.present_at_pull) AS present_at_pull,
     round(u.uptime_ms / 1000.0, 1) AS uptime_sec,
