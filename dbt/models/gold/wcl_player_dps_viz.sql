@@ -1,10 +1,14 @@
 {{ config(
+    enabled=false,
     materialized='table',
     schema='gold',
     tags=['warcraftlogs', 'gold', 'power_bi']
 ) }}
 
 /*
+  OBSOLÈTE (enabled=false) : dépendait de wcl_player_fight_metrics (supprimé).
+  À reconstruire depuis bronze ``events`` (type=damage) × ``master_actors``.
+
   Gold viz DPS : même grain que ``wcl_boss_dps`` + colonnes Streamlit / Power BI.
   Pas de ``ref(wcl_boss_dps)`` : évite les vues ClickHouse stale (alias ``s.``).
 */
