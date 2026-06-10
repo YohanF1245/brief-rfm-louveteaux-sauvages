@@ -1,10 +1,14 @@
 {{ config(
+    enabled=false,
     materialized='table',
     schema='silver',
     tags=['warcraftlogs', 'silver']
 ) }}
 
 /*
+  OBSOLÈTE (enabled=false) : reposait sur bronze ``fight_player_stats`` supprimé.
+  Remplacement : bronze ``player_details`` (player_guid) + ``master_actors``.
+
   Mapping fight-local ``player_id`` → ``player_guid`` (WoW) depuis la metric ``summary``.
   Sous-requête : évite ILLEGAL_AGGREGATION ClickHouse (filtre avant GROUP BY).
 */
