@@ -13,7 +13,7 @@ WITH {{ wcl_guild_flags_cte() }}
 SELECT
     r.report_start_at,
     toDate(r.report_start_at) AS report_date,
-    r.report_code,
+    r.report_code AS report_code,
     r.guild_name AS report_guild_name,
     r.zone_name AS raid_or_dungeon,
     f.fight_id,
@@ -55,7 +55,7 @@ WHERE e.event_type = 'damage'
   AND tgt.resolved_actor_type = 'Player'
   AND f.duration_sec > 0
 GROUP BY
-    r.report_start_at, report_date, r.report_code, report_guild_name,
+    r.report_start_at, report_date, report_code, report_guild_name,
     raid_or_dungeon, f.fight_id, boss_name, f.is_boss, f.is_kill,
     difficulty_label, f.keystone_level, fight_duration_sec,
     player_name, tgt.player_guid, class_name, is_guild_member,
