@@ -14,8 +14,8 @@ models:
         description: "Chiffre d'affaires du jour/région"
         tests: [not_null]
 
-  - name: wcl_boss_dps
-    description: "DPS boss par joueur — couche gold Warcraft Logs pour Play / Power BI."
+  - name: wcl_fight_player_perf_viz
+    description: "KPI central joueur × fight : DPS/HPS/DTPS, morts, interrupts, potions, spé/ilvl, flag guilde."
     columns:
       - name: report_code
         tests: [not_null]
@@ -25,29 +25,62 @@ models:
         tests: [not_null]
       - name: dps
         tests: [not_null]
-
-  - name: wcl_player_dps_viz
-    description: "DPS boss enrichi — viz multi-joueurs raid/donjon (Power BI / Streamlit)."
-    columns:
-      - name: player_name
-        tests: [not_null]
-      - name: dps
-        tests: [not_null]
-      - name: raid_or_dungeon
-        tests: [not_null]
-      - name: is_nightmares_asylum
-        tests: [not_null]
       - name: is_guild_member
         tests: [not_null]
+      - name: fight_duration_sec
+        tests: [not_null]
 
-  - name: wcl_raid_consumables_viz
-    description: "Uptime food/flacon/huile et potions en raid boss — Nightmares Asylum."
+  - name: wcl_damage_taken_viz
+    description: "DTPS détaillé : joueur × source de dégâts × sort × fight."
     columns:
+      - name: report_code
+        tests: [not_null]
+      - name: player_name
+        tests: [not_null]
+      - name: source_name
+        tests: [not_null]
+      - name: damage_taken
+        tests: [not_null]
+
+  - name: wcl_consumables_viz
+    description: "Consommables par joueur × fight : uptime exact (flask/food/rune/huile) + casts (potions/healthstones)."
+    columns:
+      - name: report_code
+        tests: [not_null]
       - name: player_name
         tests: [not_null]
       - name: consumable_type
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['flask', 'food', 'augment_rune', 'weapon_buff', 'potion', 'healthstone']
+      - name: present_at_pull
         tests: [not_null]
-      - name: boss_name
+
+  - name: wcl_deaths_viz
+    description: "Morts de joueurs : ordre dans le fight, timing, sort fatal."
+    columns:
+      - name: report_code
         tests: [not_null]
-      - name: is_guild_member
+      - name: player_name
+        tests: [not_null]
+      - name: death_rank
+        tests: [not_null]
+
+  - name: wcl_raid_nights_viz
+    description: "Synthèse par soirée (report) : pulls, kills, wipes, durée, effectif."
+    columns:
+      - name: report_code
+        tests: [not_null, unique]
+      - name: total_pulls
+        tests: [not_null]
+
+  - name: wcl_attendance_viz
+    description: "Présence des membres du roster guilde par report."
+    columns:
+      - name: report_code
+        tests: [not_null]
+      - name: character_name
+        tests: [not_null]
+      - name: attended
         tests: [not_null]

@@ -5,12 +5,21 @@ Transformations SQL versionnées (couche **gold** ClickHouse + option Postgres).
 ## Warcraft Logs
 
 Le bronze WCL est passé aux **données brutes** (events + masterData), voir
-`docs/wcl_bronze.md`. Modèles actifs : `wcl_reports`, `wcl_fights`,
-`wcl_ingestion_state`, `wcl_guild_roster`. Les modèles basés sur l'ancien
-bronze agrégé (`wcl_player_fight_metrics`, `wcl_fight_player_guids`,
-`wcl_boss_dps`, `wcl_player_dps_viz`, `wcl_raid_consumables_viz`) sont
-désactivés (`enabled=false`) et servent de référence pour la reconstruction
-silver/gold depuis `events` × `master_actors`.
+`docs/wcl_bronze.md`. Couches silver/gold reconstruites dessus, documentées
+dans `docs/wcl_silver_gold.md` :
+
+- **silver** : `wcl_reports`, `wcl_fights`, `wcl_actors` (pets résolus),
+  `wcl_abilities`, `wcl_events` (fait central MergeTree), `wcl_pull_combatants`,
+  `wcl_pull_auras`, `wcl_player_details`, `wcl_guild_roster`, `wcl_ingestion_state`
+- **gold** (KPI) : `wcl_fight_player_perf_viz`, `wcl_damage_taken_viz`,
+  `wcl_consumables_viz`, `wcl_deaths_viz`, `wcl_raid_nights_viz`,
+  `wcl_attendance_viz`
+- macros : `wcl_consumable_type` / `wcl_difficulty_label` (`macros/wcl_helpers.sql`)
+
+Les modèles basés sur l'ancien bronze agrégé (`wcl_player_fight_metrics`,
+`wcl_fight_player_guids`, `wcl_boss_dps`, `wcl_player_dps_viz`,
+`wcl_raid_consumables_viz`) restent désactivés (`enabled=false`), conservés
+comme référence de logique métier.
 
 ## Cibles
 

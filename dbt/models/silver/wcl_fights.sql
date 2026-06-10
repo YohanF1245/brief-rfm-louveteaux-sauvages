@@ -4,13 +4,18 @@
     tags=['warcraftlogs', 'silver']
 ) }}
 
+/*
+  ``start_time_ms`` / ``end_time_ms`` sont RELATIFS au début du report
+  (même référentiel que ``events.timestamp_ms``). L'heure absolue se calcule
+  en gold : ``report_start_at + INTERVAL start_time_ms MILLISECOND``.
+*/
 SELECT
     report_code,
     toInt32(fight_id) AS fight_id,
     toInt32(encounter_id) AS encounter_id,
     fight_name,
-    toDateTime64(start_time_ms / 1000, 3, 'UTC') AS fight_start_at,
-    toDateTime64(end_time_ms / 1000, 3, 'UTC') AS fight_end_at,
+    toInt64(start_time_ms) AS start_time_ms,
+    toInt64(end_time_ms) AS end_time_ms,
     toInt64OrNull(toString(duration_ms)) AS duration_ms,
     toFloat64(duration_ms) / 1000.0 AS duration_sec,
     toUInt8(kill) AS is_kill,
