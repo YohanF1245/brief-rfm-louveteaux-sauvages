@@ -16,10 +16,14 @@ from warcraftlogs_common import (  # noqa: E402
     fetch_all_guild_and_member_reports,
     fetch_all_guild_members,
     fetch_all_guild_reports,
-    fetch_fight_tables,
+    fetch_events_page,
     fetch_guild_reports,
     fetch_report_fights,
+    fetch_report_master_data,
+    fetch_report_player_details,
     guild_url_from_env,
+    master_data_rows,
+    player_details_rows,
     user_ids_from_env,
 )
 
@@ -35,7 +39,11 @@ def main() -> int:
         help="Inclure logs personnels publics (WCL_USER_IDS)",
     )
     parser.add_argument("--fights", metavar="REPORT_CODE", help="Afficher les fights d'un report")
-    parser.add_argument("--stats", metavar="REPORT_CODE", help="Stats raid d'un report (1er boss fight)")
+    parser.add_argument(
+        "--raw",
+        metavar="REPORT_CODE",
+        help="Données brutes d'un report : masterData + playerDetails + 1ère page events",
+    )
     parser.add_argument("--roster", action="store_true", help="Afficher le roster guilde (guild.members)")
     parser.add_argument("--json", action="store_true", help="Sortie JSON brute")
     args = parser.parse_args()
@@ -72,25 +80,56 @@ def main() -> int:
                 )
         return 0
 
-    if args.stats:
-        report = fetch_report_fights(args.stats)
-        boss_fights = [f for f in (report.get("fights") or []) if f.get("encounterID")]
-        if not boss_fights:
-            print("Aucun fight boss dans ce report.")
-            return 1
-        fight = boss_fights[0]
-        metrics, _ = fetch_fight_tables(args.stats, int(fight["startTime"]), int(fight["endTime"]))
+    if args.raw:
+        code = args.raw
+        report = fetch_report_fights(code)
+        range_end = float(report.get("endTime", 0)) - float(report.get("startTime", 0))
+
+        master = fetch_report_master_data(code)
+        info_row, actor_rows, ability_rows = master_data_rows(code, master)
+
+        details_payload = fetch_report_player_details(code, 0.0, range_end)
+        detail_rows = player_details_rows(code, details_payload)
+
+        page = fetch_events_page(code, 0.0, range_end)
+        events = page.get("data") or []
+
         if args.json:
-            print(json.dumps({"fight": fight, "metrics": metrics}, indent=2, ensure_ascii=False))
-        else:
-            print(f"Fight {fight.get('name')} (id={fight.get('id')})")
-            for metric, rows in metrics.items():
-                print(f"  {metric}:")
-                for row in rows[:5]:
-                    print(
-                        f"    - {row['player_name']} ({row.get('class_name')}) "
-                        f"{row['rate_per_sec']:.0f}/s total={row['total_amount']}"
-                    )
+            print(
+                json.dumps(
+                    {
+                        "master_info": info_row,
+                        "actors_sample": actor_rows[:10],
+                        "player_details": detail_rows,
+                        "events_sample": events[:20],
+                        "nextPageTimestamp": page.get("nextPageTimestamp"),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+            return 0
+
+        print(f"Report {code} : {report.get('title')} ({len(report.get('fights') or [])} fights)")
+        print(
+            f"masterData : {len(actor_rows)} acteurs, {len(ability_rows)} abilities, "
+            f"lang={info_row.get('lang')}"
+        )
+        players = [a for a in actor_rows if a.get("actor_type") == "Player"]
+        for actor in players[:15]:
+            print(f"  - [{actor['actor_id']}] {actor['name']} ({actor['sub_type']}) {actor.get('server') or ''}")
+        print(f"playerDetails : {len(detail_rows)} lignes joueur/rôle")
+        for row in detail_rows[:10]:
+            print(
+                f"  - {row['player_name']} [{row['role']}] {row['class_name']} "
+                f"ilvl={row.get('max_item_level')} guid={row.get('player_guid')}"
+            )
+        types: dict[str, int] = {}
+        for event in events:
+            types[event.get("type") or "?"] = types.get(event.get("type") or "?", 0) + 1
+        print(f"events page 1 : {len(events)} events, next={page.get('nextPageTimestamp')}")
+        for etype, count in sorted(types.items(), key=lambda x: -x[1]):
+            print(f"  - {etype}: {count}")
         return 0
 
     if args.members or (args.all and user_ids_from_env()):
