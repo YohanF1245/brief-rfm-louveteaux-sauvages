@@ -16,8 +16,10 @@ Tout est recalculable depuis ``events`` × ``master_actors`` (joueurs, pets via
 ``pet_owner_id``, NPC) × ``master_abilities`` : DPS, soins, buffs, consommables,
 morts, interrupts, … → plus jamais de ré-ingestion pour un nouveau besoin.
 
-Après ingest : lancer **une fois** ``warcraftlogs_lakehouse_dbt``.
-Roster guilde (``player_guid``) : DAG ``warcraftlogs_guild_roster`` (quotidien).
+Aval (déclenchement par assets, aucun cron dbt) :
+``ingest_reports_incremental`` publie l'asset ``wcl_bronze`` →
+``warcraftlogs_silver`` (dbt silver) → asset ``wcl_silver`` →
+``warcraftlogs_gold`` (KPI). Roster guilde : DAG ``warcraftlogs_guild_roster``.
 
 Ré-ingest forcé d'un report : ``scripts/reset_wcl_ingestion.py`` (status → pending),
 le bronze du report est remplacé de façon idempotente (delete + append).
@@ -52,6 +54,7 @@ from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk import Variable
 
+from warcraftlogs_assets import WCL_BRONZE
 from warcraftlogs_ingest import ingest_reports_incremental, sync_report_catalog
 
 _DEFAULT_SCHEDULE = "*/30 * * * *"
@@ -83,6 +86,7 @@ with DAG(
     ingest_bronze = PythonOperator(
         task_id="ingest_reports_incremental",
         python_callable=ingest_reports_incremental,
+        outlets=[WCL_BRONZE],
     )
 
     sync_catalog >> ingest_bronze

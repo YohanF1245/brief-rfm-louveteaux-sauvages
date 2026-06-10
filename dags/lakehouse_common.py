@@ -14,13 +14,17 @@ from deltalake import write_deltalake
 
 DBT_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt"))
 DBT_RUNTIME_DIR = Path(os.environ.get("DBT_RUNTIME_DIR", "/opt/airflow/logs/dbt"))
-# Modèles compatibles avec le bronze "données brutes" (docs/wcl_bronze.md).
-# Les anciens modèles basés sur fight_player_stats (wcl_player_fight_metrics,
-# wcl_fight_player_guids, gold wcl_*_viz) sont à reconstruire depuis
-# silver events × master_actors — ne pas les remettre ici tant que le bronze
-# events n'est pas peuplé.
-WCL_DBT_SILVER = "wcl_reports wcl_fights wcl_ingestion_state wcl_guild_roster"
-WCL_DBT_GOLD = ""
+# Modèles construits sur le bronze "données brutes" (docs/wcl_bronze.md,
+# docs/wcl_silver_gold.md). Les anciens modèles agrégés restent enabled=false.
+WCL_DBT_SILVER = (
+    "wcl_reports wcl_fights wcl_ingestion_state wcl_guild_roster "
+    "wcl_actors wcl_abilities wcl_events wcl_pull_combatants wcl_pull_auras "
+    "wcl_player_details"
+)
+WCL_DBT_GOLD = (
+    "wcl_fight_player_perf_viz wcl_damage_taken_viz wcl_consumables_viz "
+    "wcl_deaths_viz wcl_raid_nights_viz wcl_attendance_viz"
+)
 BRONZE_DELTA_PATH = "s3://lake/bronze/stack_test/ventes"
 DELTA_TABLE_URL = "http://minio:9000/lake/bronze/stack_test/ventes"
 
@@ -174,14 +178,25 @@ def _assert_wcl_models_on_disk() -> None:
     expected = [
         "wcl_reports.sql",
         "wcl_fights.sql",
-        "wcl_player_fight_metrics.sql",
         "wcl_ingestion_state.sql",
         "wcl_guild_roster.sql",
-        "wcl_fight_player_guids.sql",
+        "wcl_actors.sql",
+        "wcl_abilities.sql",
+        "wcl_events.sql",
+        "wcl_pull_combatants.sql",
+        "wcl_pull_auras.sql",
+        "wcl_player_details.sql",
     ]
     silver_dir = DBT_DIR / "models" / "silver"
     gold_dir = DBT_DIR / "models" / "gold"
-    gold_expected = ["wcl_boss_dps.sql", "wcl_player_dps_viz.sql", "wcl_raid_consumables_viz.sql"]
+    gold_expected = [
+        "wcl_fight_player_perf_viz.sql",
+        "wcl_damage_taken_viz.sql",
+        "wcl_consumables_viz.sql",
+        "wcl_deaths_viz.sql",
+        "wcl_raid_nights_viz.sql",
+        "wcl_attendance_viz.sql",
+    ]
     present = sorted(p.name for p in silver_dir.glob("wcl_*.sql")) if silver_dir.is_dir() else []
     gold_present = sorted(p.name for p in gold_dir.glob("wcl_*.sql")) if gold_dir.is_dir() else []
     missing = [name for name in expected if name not in present]
@@ -235,7 +250,7 @@ def run_dbt(select: str, **_) -> None:
     cmd = _dbt_base_cmd("run", "--select", select)
     # Gold WCL : --full-refresh recrée les tables (schéma ClickHouse), sans pre_hook DROP
     # qui casse l'échange de tables du adapter dbt-clickhouse.
-    if set(matched) & {"wcl_boss_dps", "wcl_player_dps_viz", "wcl_raid_consumables_viz"}:
+    if any(name.endswith("_viz") for name in matched):
         cmd.append("--full-refresh")
     print("Commande :", " ".join(cmd))
     result = subprocess.run(

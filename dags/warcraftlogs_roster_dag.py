@@ -1,13 +1,10 @@
 """
 Roster guilde Nightmares Asylum — sync journalier API → bronze Delta.
 
-Flux :
-  1. ``sync_guild_roster`` — ``guild.members`` WCL → ``s3://lake/bronze/warcraftlogs/guild_roster``
-  2. ``dbt_silver_roster`` — ``silver.wcl_guild_roster`` + ``silver.wcl_fight_player_guids``
-     (guids lus depuis la bronze ``fight_player_stats``, pas besoin de rebuild metrics avant)
-
-Puis lancer ``warcraftlogs_lakehouse_dbt`` (gold) ou attendre le schedule dbt pour
-propager ``is_guild_member`` / ``player_guid`` dans les viz Streamlit.
+``sync_guild_roster`` : ``guild.members`` WCL → ``s3://lake/bronze/warcraftlogs/guild_roster``
+puis publie l'asset ``wcl_bronze_roster`` → déclenche ``warcraftlogs_silver``
+(qui reconstruit ``silver.wcl_guild_roster`` et propage ``is_guild_member``
+jusqu'au gold via ``warcraftlogs_gold``). Plus de task dbt ici.
 
 Variable Airflow ``wcl_roster_schedule`` (défaut ``0 6 * * *``).
 """
@@ -20,11 +17,10 @@ from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk import Variable
 
-from lakehouse_common import run_dbt
+from warcraftlogs_assets import WCL_ROSTER
 from warcraftlogs_roster_ingest import sync_guild_roster
 
 _DEFAULT_SCHEDULE = "0 6 * * *"
-_ROSTER_DBT_SILVER = "wcl_guild_roster wcl_fight_player_guids"
 
 
 def _roster_schedule() -> str | None:
@@ -49,11 +45,5 @@ with DAG(
     sync_roster = PythonOperator(
         task_id="sync_guild_roster",
         python_callable=sync_guild_roster,
+        outlets=[WCL_ROSTER],
     )
-    dbt_silver_roster = PythonOperator(
-        task_id="dbt_silver_roster",
-        python_callable=run_dbt,
-        op_kwargs={"select": _ROSTER_DBT_SILVER},
-    )
-
-    sync_roster >> dbt_silver_roster
