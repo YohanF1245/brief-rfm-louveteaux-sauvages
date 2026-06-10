@@ -9,7 +9,8 @@
   temps passé en combat, effectif présent, meilleure progression par soirée.
   KPI : assiduité de la guilde, rythme de progression, efficacité des soirées.
 */
-WITH fight_stats AS (
+WITH {{ wcl_guild_flags_cte() }},
+fight_stats AS (
     SELECT
         report_code,
         count() AS total_pulls,
@@ -30,7 +31,7 @@ roster_stats AS (
         report_code,
         uniqExact(player_name) AS players_total,
         uniqExactIf(player_name, is_guild_member = 1) AS players_guild
-    FROM {{ ref('wcl_player_guild_flags') }}
+    FROM guild_flags
     GROUP BY report_code
 ),
 ilvl_stats AS (

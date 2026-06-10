@@ -114,6 +114,7 @@ pull_info AS (
         ON pcom.report_code = a.report_code AND pcom.player_actor_id = a.actor_id
     GROUP BY pcom.report_code, pcom.fight_id, a.resolved_player_name
 ),
+{{ wcl_guild_flags_cte() }},
 fight_players AS (
     SELECT DISTINCT report_code, fight_id, player_name
     FROM (
@@ -189,6 +190,6 @@ LEFT JOIN player_deaths AS pd
     ON fp.report_code = pd.report_code AND fp.fight_id = pd.fight_id AND fp.player_name = pd.player_name
 LEFT JOIN pull_info AS pi
     ON fp.report_code = pi.report_code AND fp.fight_id = pi.fight_id AND fp.player_name = pi.player_name
-LEFT JOIN {{ ref('wcl_player_guild_flags') }} AS gf
+LEFT JOIN guild_flags AS gf
     ON fp.report_code = gf.report_code AND fp.player_name = gf.player_name
 WHERE f.duration_sec > 0

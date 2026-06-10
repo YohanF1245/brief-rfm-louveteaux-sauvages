@@ -11,6 +11,7 @@
   dans l'event (nullable selon les logs).
   KPI : morts évitables, joueurs qui meurent tôt, wipes analysés.
 */
+WITH {{ wcl_guild_flags_cte() }}
 SELECT
     r.report_start_at,
     toDate(r.report_start_at) AS report_date,
@@ -47,7 +48,7 @@ LEFT JOIN {{ ref('wcl_abilities') }} AS ab
     ON e.report_code = ab.report_code AND e.ability_game_id = ab.ability_game_id
 LEFT JOIN {{ ref('wcl_actors') }} AS killer
     ON e.report_code = killer.report_code AND e.killer_id = killer.actor_id
-LEFT JOIN {{ ref('wcl_player_guild_flags') }} AS gf
+LEFT JOIN guild_flags AS gf
     ON e.report_code = gf.report_code AND a.resolved_player_name = gf.player_name
 WHERE e.event_type = 'death'
   AND a.resolved_actor_type = 'Player'

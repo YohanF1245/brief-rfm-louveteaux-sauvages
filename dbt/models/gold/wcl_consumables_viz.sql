@@ -17,7 +17,8 @@
   KPI : présence au pull, uptime % par fight, uptime moyen par soirée,
   préparation des joueurs (% de pulls avec flask/food).
 */
-WITH consumable_abilities AS (
+WITH {{ wcl_guild_flags_cte() }},
+consumable_abilities AS (
     SELECT
         report_code,
         ability_game_id,
@@ -168,7 +169,7 @@ INNER JOIN {{ ref('wcl_reports') }} AS r
     ON u.report_code = r.report_code
 INNER JOIN {{ ref('wcl_actors') }} AS a
     ON u.report_code = a.report_code AND u.player_actor_id = a.actor_id
-LEFT JOIN {{ ref('wcl_player_guild_flags') }} AS gf
+LEFT JOIN guild_flags AS gf
     ON u.report_code = gf.report_code AND a.resolved_player_name = gf.player_name
 WHERE a.resolved_actor_type = 'Player'
   AND f.duration_sec > 0

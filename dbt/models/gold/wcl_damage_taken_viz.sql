@@ -9,6 +9,7 @@
   Répond à « qui prend des dégâts, de quoi, et sur quel sort » :
   dégâts évitables, tanks vs raid damage, comparaison entre pulls d'un boss.
 */
+WITH {{ wcl_guild_flags_cte() }}
 SELECT
     r.report_start_at,
     toDate(r.report_start_at) AS report_date,
@@ -48,7 +49,7 @@ INNER JOIN {{ ref('wcl_fights') }} AS f
     ON e.report_code = f.report_code AND e.fight_id = f.fight_id
 INNER JOIN {{ ref('wcl_reports') }} AS r
     ON e.report_code = r.report_code
-LEFT JOIN {{ ref('wcl_player_guild_flags') }} AS gf
+LEFT JOIN guild_flags AS gf
     ON e.report_code = gf.report_code AND tgt.resolved_player_name = gf.player_name
 WHERE e.event_type = 'damage'
   AND tgt.resolved_actor_type = 'Player'
