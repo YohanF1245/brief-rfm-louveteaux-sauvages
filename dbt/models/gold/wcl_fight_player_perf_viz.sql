@@ -29,8 +29,8 @@ WITH player_dim AS (
 ),
 player_damage AS (
     SELECT
-        e.report_code,
-        e.fight_id,
+        e.report_code AS report_code,
+        e.fight_id AS fight_id,
         a.resolved_player_name AS player_name,
         sum(coalesce(e.amount, 0)) AS damage_done,
         countIf(e.hit_type = 2) AS crit_hits,
@@ -44,8 +44,8 @@ player_damage AS (
 ),
 player_damage_taken AS (
     SELECT
-        e.report_code,
-        e.fight_id,
+        e.report_code AS report_code,
+        e.fight_id AS fight_id,
         a.resolved_player_name AS player_name,
         sum(coalesce(e.amount, 0)) AS damage_taken,
         sum(coalesce(e.absorbed, 0)) AS damage_absorbed,
@@ -59,8 +59,8 @@ player_damage_taken AS (
 ),
 player_healing AS (
     SELECT
-        e.report_code,
-        e.fight_id,
+        e.report_code AS report_code,
+        e.fight_id AS fight_id,
         a.resolved_player_name AS player_name,
         sum(coalesce(e.amount, 0)) AS healing_done,
         sum(coalesce(e.overheal, 0)) AS overheal
@@ -72,9 +72,11 @@ player_healing AS (
     GROUP BY e.report_code, e.fight_id, player_name
 ),
 player_counters AS (
+    -- Alias explicites : avec 2+ JOINs dans un CTE, ClickHouse garde les noms
+    -- qualifiés (e.report_code) en sortie → le JOIN aval ne résout plus la colonne
     SELECT
-        e.report_code,
-        e.fight_id,
+        e.report_code AS report_code,
+        e.fight_id AS fight_id,
         a.resolved_player_name AS player_name,
         countIf(e.event_type = 'interrupt') AS interrupts,
         countIf(e.event_type = 'dispel') AS dispels,
@@ -91,8 +93,8 @@ player_counters AS (
 ),
 player_deaths AS (
     SELECT
-        e.report_code,
-        e.fight_id,
+        e.report_code AS report_code,
+        e.fight_id AS fight_id,
         a.resolved_player_name AS player_name,
         count() AS deaths
     FROM {{ ref('wcl_events') }} AS e
@@ -104,8 +106,8 @@ player_deaths AS (
 ),
 pull_info AS (
     SELECT
-        pcom.report_code,
-        pcom.fight_id,
+        pcom.report_code AS report_code,
+        pcom.fight_id AS fight_id,
         a.resolved_player_name AS player_name,
         any(pcom.spec_id) AS spec_id,
         any(pcom.avg_item_level) AS avg_item_level

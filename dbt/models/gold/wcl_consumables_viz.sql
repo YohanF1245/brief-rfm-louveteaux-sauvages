@@ -31,12 +31,12 @@ consumable_abilities AS (
 -- Transitions en combat (applybuff/refreshbuff = actif, removebuff = inactif)
 buff_changes AS (
     SELECT
-        e.report_code,
-        e.fight_id,
+        e.report_code AS report_code,
+        e.fight_id AS fight_id,
         e.target_id AS player_actor_id,
-        e.ability_game_id,
-        ca.ability_name,
-        ca.consumable_type,
+        e.ability_game_id AS ability_game_id,
+        ca.ability_name AS ability_name,
+        ca.consumable_type AS consumable_type,
         toInt64(e.timestamp_ms) AS ts,
         toUInt8(if(e.event_type = 'removebuff', 0, 1)) AS state
     FROM {{ ref('wcl_events') }} AS e
@@ -45,13 +45,15 @@ buff_changes AS (
     WHERE e.event_type IN ('applybuff', 'refreshbuff', 'removebuff')
       AND ca.consumable_type IN ('flask', 'food', 'augment_rune', 'weapon_buff')
 ),
--- État au pull : aura déjà active au début du fight
+-- État au pull : aura déjà active au début du fight.
+-- Alias explicites : avec 2+ JOINs dans un CTE, ClickHouse garde les noms
+-- qualifiés (pa.report_code) en sortie → l'UNION/JOIN aval ne résout plus.
 pull_seeds AS (
     SELECT
-        pa.report_code,
-        pa.fight_id,
-        pa.player_actor_id,
-        pa.ability_game_id,
+        pa.report_code AS report_code,
+        pa.fight_id AS fight_id,
+        pa.player_actor_id AS player_actor_id,
+        pa.ability_game_id AS ability_game_id,
         coalesce(pa.aura_name, ca.ability_name, concat('ability_', toString(pa.ability_game_id))) AS ability_name,
         {{ wcl_consumable_type("coalesce(pa.aura_name, ca.ability_name, '')") }} AS consumable_type,
         toInt64(f.start_time_ms) AS ts,
@@ -66,10 +68,10 @@ pull_seeds AS (
 ),
 buff_uptime AS (
     SELECT
-        c.report_code,
-        c.fight_id,
-        c.player_actor_id,
-        c.ability_game_id,
+        c.report_code AS report_code,
+        c.fight_id AS fight_id,
+        c.player_actor_id AS player_actor_id,
+        c.ability_game_id AS ability_game_id,
         any(c.ability_name) AS ability_name,
         any(c.consumable_type) AS consumable_type,
         max(c.state = 1 AND c.ts <= toInt64(f.start_time_ms)) AS present_at_pull,
@@ -107,10 +109,10 @@ buff_uptime AS (
 -- Potions / healthstones : comptage de casts en combat
 cast_counts AS (
     SELECT
-        e.report_code,
-        e.fight_id,
+        e.report_code AS report_code,
+        e.fight_id AS fight_id,
         e.source_id AS player_actor_id,
-        e.ability_game_id,
+        e.ability_game_id AS ability_game_id,
         any(ca.ability_name) AS ability_name,
         any(ca.consumable_type) AS consumable_type,
         toUInt8(0) AS present_at_pull,

@@ -22,36 +22,52 @@
     (le DAG gold peut tourner sans qu'elle soit matérialisée).
 #}
 
-{% macro wcl_guild_flags_cte(cte_name='guild_flags') -%}
-{{ cte_name }} AS (
+{# Colonnes internes renommées src_* : sinon ClickHouse substitue l'alias
+   ``is_guild_member`` (= max(...)) dans la condition du anyIf → ILLEGAL_AGGREGATION #}
+
+{% macro wcl_guild_flags_src_subquery() -%}
     SELECT
         report_code,
         player_name,
-        max(is_guild_member) AS is_guild_member,
-        anyIf(player_guild_name, is_guild_member = 1) AS player_guild_name,
-        anyIf(role, role IS NOT NULL AND role != '') AS role
-    FROM (
-        SELECT
-            report_code,
-            player_name,
-            is_guild_member,
-            player_guild_name,
-            role
-        FROM {{ ref('wcl_player_details') }}
+        is_guild_member AS src_guild_member,
+        player_guild_name AS src_guild_name,
+        roster_character_name AS src_roster_name,
+        role AS src_role
+    FROM {{ ref('wcl_player_details') }}
 
-        UNION ALL
+    UNION ALL
 
-        SELECT
-            report_code,
-            resolved_player_name AS player_name,
-            is_guild_member,
-            player_guild_name,
-            CAST(NULL AS Nullable(String)) AS role
-        FROM {{ ref('wcl_actors') }}
-        WHERE resolved_actor_type = 'Player'
-          AND resolved_player_name != ''
-    ) AS _guild_src
-    GROUP BY report_code, player_name
+    SELECT
+        report_code,
+        resolved_player_name AS player_name,
+        is_guild_member AS src_guild_member,
+        player_guild_name AS src_guild_name,
+        roster_character_name AS src_roster_name,
+        CAST(NULL AS Nullable(String)) AS src_role
+    FROM {{ ref('wcl_actors') }}
+    WHERE resolved_actor_type = 'Player'
+      AND resolved_player_name != ''
+{%- endmacro %}
+
+{% macro wcl_guild_flags_aggregate_sql(include_roster_character_name=false) -%}
+SELECT
+    report_code,
+    player_name,
+    max(src_guild_member) AS is_guild_member,
+    anyIf(src_guild_name, src_guild_member = 1) AS player_guild_name,
+    {%- if include_roster_character_name %}
+    anyIf(src_roster_name, src_guild_member = 1) AS roster_character_name,
+    {%- endif %}
+    anyIf(src_role, src_role IS NOT NULL AND src_role != '') AS role
+FROM (
+    {{ wcl_guild_flags_src_subquery() }}
+) AS _guild_src
+GROUP BY report_code, player_name
+{%- endmacro %}
+
+{% macro wcl_guild_flags_cte(cte_name='guild_flags') -%}
+{{ cte_name }} AS (
+    {{ wcl_guild_flags_aggregate_sql(include_roster_character_name=false) }}
 )
 {%- endmacro %}
 
