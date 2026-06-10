@@ -1,4 +1,4 @@
-"""Uptime consommables raid — food, flacon, huile, potions (gold.wcl_raid_consumables_viz)."""
+"""Uptime consommables raid — food, flacon, huile, potions (gold.wcl_consumables_viz)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,18 @@ from ch_utils import _esc, ch_query, ch_scalar
 from wcl_guild_filters import guild_player_clause, guild_report_clause
 from wcl_streamlit_helpers import column_values
 
-VIZ_TABLE = "wcl_raid_consumables_viz"
+VIZ_TABLE = "wcl_consumables_viz"
+
+# Types buffs reconnus par le gold (``weapon_buff`` = huiles / pierres à aiguiser)
+BUFF_TYPES = ("food", "flask", "weapon_buff", "augment_rune")
+CONSUMABLE_LABELS = {
+    "food": "food",
+    "flask": "flacon",
+    "weapon_buff": "huile/arme",
+    "augment_rune": "rune",
+    "potion": "potion",
+    "healthstone": "healthstone",
+}
 
 st.set_page_config(page_title="WCL — Consommables raid", layout="wide")
 
@@ -29,6 +40,7 @@ def load_raids(guild_only: bool) -> list[str]:
         FROM {VIZ_TABLE}
         WHERE {guild_report_clause(guild_only)}
           AND {guild_player_clause(guild_only)}
+          AND is_boss = 1
           AND raid_or_dungeon != ''
         ORDER BY raid_or_dungeon
         """
@@ -44,6 +56,7 @@ def load_bosses(guild_only: bool, raid: str) -> list[str]:
         FROM {VIZ_TABLE}
         WHERE {guild_report_clause(guild_only)}
           AND {guild_player_clause(guild_only)}
+          AND is_boss = 1
           AND raid_or_dungeon = '{_esc(raid)}'
         ORDER BY boss_name
         """
@@ -61,6 +74,7 @@ def load_consumables(
     filters = [
         guild_report_clause(guild_only),
         guild_player_clause(guild_only),
+        "is_boss = 1",
         f"raid_or_dungeon = '{_esc(raid)}'",
         "lower(player_name) != 'unknown'",
     ]
@@ -75,16 +89,16 @@ def load_consumables(
         SELECT
             report_start_at,
             player_name,
-            guild_name,
-            player_guild_name,
+            report_guild_name AS guild_name,
             boss_name,
             raid_or_dungeon,
             difficulty_label,
             consumable_type,
             consumable_name,
+            present_at_pull,
             uptime_sec,
             uptime_pct,
-            potion_uses,
+            casts AS potion_uses,
             fight_duration_sec
         FROM {VIZ_TABLE}
         WHERE {" AND ".join(filters)}
@@ -98,6 +112,10 @@ def load_consumables(
     df["uptime_pct"] = pd.to_numeric(df["uptime_pct"], errors="coerce")
     df["uptime_sec"] = pd.to_numeric(df["uptime_sec"], errors="coerce")
     df["potion_uses"] = pd.to_numeric(df["potion_uses"], errors="coerce")
+    df["present_at_pull"] = pd.to_numeric(df["present_at_pull"], errors="coerce")
+    df["consumable_label"] = df["consumable_type"].map(CONSUMABLE_LABELS).fillna(
+        df["consumable_type"]
+    )
     return df
 
 
@@ -110,8 +128,7 @@ except RuntimeError as exc:
 if row_count == 0:
     st.warning(
         f"La table `gold.{VIZ_TABLE}` est vide. "
-        "1) **warcraftlogs_guild_nightmares** (ingest + ré-ingest buffs par joueur) "
-        "2) **warcraftlogs_guild_roster** 3) **warcraftlogs_lakehouse_dbt**."
+        "Lance **warcraftlogs_silver** puis **warcraftlogs_gold** dans Airflow."
     )
     st.stop()
 
@@ -121,7 +138,7 @@ if not raids:
     if guild_only and row_count > 0:
         st.warning(
             "Des lignes existent en gold, mais le filtre **membres guilde** ne retourne rien. "
-            "Décoche « Nightmares Asylum » ou synchronise le roster (`warcraftlogs_guild_roster`)."
+            "Décoche « Nightmares Asylum » ou synchronise le roster (**warcraftlogs_guild_roster**)."
         )
     else:
         st.info("Aucune donnée consommables pour ce filtre.")
@@ -144,6 +161,7 @@ with col_diff:
         FROM {VIZ_TABLE}
         WHERE {guild_report_clause(guild_only)}
           AND {guild_player_clause(guild_only)}
+          AND is_boss = 1
           AND raid_or_dungeon = '{_esc(raid)}'
         ORDER BY difficulty_label
         """
@@ -156,7 +174,7 @@ if df.empty:
     st.info("Aucune ligne pour ces filtres.")
     st.stop()
 
-buffs = df[df["consumable_type"].isin(["food", "flask", "oil"])].copy()
+buffs = df[df["consumable_type"].isin(BUFF_TYPES)].copy()
 potions = df[df["consumable_type"] == "potion"].copy()
 
 st.subheader("Uptime consommables (%)")
@@ -164,19 +182,19 @@ if buffs.empty:
     st.info("Aucun buff food / flacon / huile détecté pour ces filtres.")
 else:
     uptime_avg = (
-        buffs.groupby(["player_name", "consumable_type"], as_index=False)["uptime_pct"]
+        buffs.groupby(["player_name", "consumable_label"], as_index=False)["uptime_pct"]
         .max()
         .rename(columns={"uptime_pct": "uptime_pct_max"})
     )
     fig_heat = px.density_heatmap(
         uptime_avg,
-        x="consumable_type",
+        x="consumable_label",
         y="player_name",
         z="uptime_pct_max",
         color_continuous_scale="RdYlGn",
         range_color=[0, 100],
         labels={
-            "consumable_type": "Type",
+            "consumable_label": "Type",
             "player_name": "Joueur",
             "uptime_pct_max": "Uptime % (max)",
         },
@@ -190,9 +208,9 @@ else:
         x="report_start_at",
         y="uptime_pct",
         color="player_name",
-        facet_row="consumable_type",
+        facet_row="consumable_label",
         markers=True,
-        hover_data=["boss_name", "consumable_name", "difficulty_label", "uptime_sec"],
+        hover_data=["boss_name", "consumable_name", "difficulty_label", "uptime_sec", "present_at_pull"],
         labels={
             "report_start_at": "Date",
             "uptime_pct": "Uptime %",
@@ -205,7 +223,7 @@ else:
 
 st.subheader("Potions en combat")
 if potions.empty:
-    st.info("Aucune potion détectée (metric casts) pour ces filtres.")
+    st.info("Aucune potion détectée pour ces filtres.")
 else:
     pot_agg = (
         potions.groupby(["player_name", "boss_name"], as_index=False)["potion_uses"]
