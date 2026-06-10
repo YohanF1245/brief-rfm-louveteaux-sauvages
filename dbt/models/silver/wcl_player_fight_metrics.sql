@@ -1,10 +1,15 @@
 {{ config(
+    enabled=false,
     materialized='table',
     schema='silver',
     tags=['warcraftlogs', 'silver']
 ) }}
 
 /*
+  OBSOLÈTE (enabled=false) : reposait sur bronze ``fight_player_stats``
+  (tables agrégées WCL, supprimées). À reconstruire depuis bronze ``events``
+  × ``master_actors`` — voir docs/wcl_bronze.md.
+
   Silver métriques joueur : colonnes bronze + champs JSON extra (camelCase WCL).
   Clés extra les plus utiles : itemLevel, id, name, total, activeTime, type, spec.
   Requête discovery : clickhouse/queries/wcl_bronze_discovery.sql §3
