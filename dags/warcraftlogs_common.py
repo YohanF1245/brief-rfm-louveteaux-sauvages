@@ -176,66 +176,87 @@ query ReportFights($code: String!) {
 }
 """
 
-# Tous les TableDataType WCL v2 (https://www.warcraftlogs.com/v2-api-docs/warcraft/tabledatatype.doc.html)
-WCL_TABLE_DATA_TYPES: tuple[str, ...] = (
-    "Summary",
-    "Buffs",
-    "Casts",
-    "DamageDone",
-    "DamageTaken",
-    "Deaths",
-    "Debuffs",
-    "Dispels",
-    "Healing",
-    "Interrupts",
-    "Resources",
-    "Summons",
-    "Survivability",
-    "Threat",
-)
+# ---------------------------------------------------------------------------
+# Requêtes "données brutes" (events + masterData + playerDetails).
+# Doc API : https://www.warcraftlogs.com/v2-api-docs/warcraft/report.doc.html
+#
+# Principe : on n'utilise PLUS les tables agrégées ``report.table`` (formats
+# instables, résolution joueur non garantie). La source de vérité est :
+#   - ``masterData``     : mapping id → acteur (joueurs, pets, NPC) + abilities
+#   - ``events``         : log brut paginé (dataType: All = tous les types)
+#   - ``playerDetails``  : specs / ilvl / talents / gear par joueur
+# ---------------------------------------------------------------------------
 
-# Alias rétrocompat (requêtes ClickHouse existantes)
-TABLE_METRIC_ALIASES: dict[str, str] = {
-    "DamageDone": "dps",
-    "Healing": "hps",
-    "DamageTaken": "dtps",
-    "Deaths": "deaths",
-    "Summary": "summary",
-    "Buffs": "buffs",
-    "Casts": "casts",
-    "Debuffs": "debuffs",
-    "Dispels": "dispels",
-    "Interrupts": "interrupts",
-    "Resources": "resources",
-    "Summons": "summons",
-    "Survivability": "survivability",
-    "Threat": "threat",
+# Taille de page max autorisée par l'API (doc : "Allowed value ranges are 100-10000").
+EVENTS_PAGE_LIMIT_MAX = 10000
+
+MASTER_DATA_QUERY = """
+query ReportMasterData($code: String!) {
+  reportData {
+    report(code: $code) {
+      masterData {
+        logVersion
+        gameVersion
+        lang
+        actors {
+          id
+          gameID
+          name
+          type
+          subType
+          petOwner
+          server
+          icon
+        }
+        abilities {
+          gameID
+          name
+          type
+          icon
+        }
+      }
+    }
+  }
 }
+"""
 
-# viewBy Source pour buffs/casts par joueur ; Default pour DPS/soins (entries classiques).
-TABLE_VIEW_BY: dict[str, str] = {
-    "Buffs": "Source",
-    "Debuffs": "Source",
-    "Casts": "Source",
-    "Threat": "Source",
-    "Resources": "Source",
-}
-
-FIGHT_TABLE_QUERY = """
-query FightTable(
+# dataType: All → tous les events (damage, heal, buffs, casts, deaths,
+# combatantinfo, resourcechange, …) en un seul flux paginé.
+# Vérifié en réel : ``combatantinfo`` (gear + talents + auras au pull) est
+# bien inclus dans ``All`` — pas besoin d'un appel séparé.
+EVENTS_PAGE_QUERY = """
+query ReportEvents(
   $code: String!
   $startTime: Float!
   $endTime: Float!
-  $dataType: TableDataType!
-  $viewBy: ViewType!
+  $limit: Int!
+  $includeResources: Boolean!
 ) {
   reportData {
     report(code: $code) {
-      table(
+      events(
         startTime: $startTime
         endTime: $endTime
-        dataType: $dataType
-        viewBy: $viewBy
+        dataType: All
+        limit: $limit
+        includeResources: $includeResources
+      ) {
+        data
+        nextPageTimestamp
+      }
+    }
+  }
+}
+"""
+
+PLAYER_DETAILS_QUERY = """
+query ReportPlayerDetails($code: String!, $startTime: Float!, $endTime: Float!) {
+  reportData {
+    report(code: $code) {
+      playerDetails(
+        startTime: $startTime
+        endTime: $endTime
+        includeCombatantInfo: true
       )
     }
   }
@@ -565,214 +586,173 @@ def _throttle() -> None:
         time.sleep(delay)
 
 
-def _normalize_table_payload(table_data: Any) -> dict[str, Any]:
-    if table_data is None:
-        return {}
-    if isinstance(table_data, str):
-        try:
-            table_data = json.loads(table_data)
-        except json.JSONDecodeError:
-            return {}
-    return table_data if isinstance(table_data, dict) else {}
+# ---------------------------------------------------------------------------
+# Helpers données brutes : masterData → lignes bronze
+# ---------------------------------------------------------------------------
 
 
-def _table_entries_block(table_data: Any) -> dict[str, Any]:
-    """WCL renvoie ``{ data: { entries, totalTime } }`` ou parfois à plat."""
-    payload = _normalize_table_payload(table_data)
-    nested = payload.get("data")
-    if isinstance(nested, dict):
-        return nested
-    return payload
-
-
-def metric_slug_for_data_type(data_type: str) -> str:
-    return TABLE_METRIC_ALIASES.get(data_type, data_type.lower())
-
-
-def view_by_for_data_type(data_type: str) -> str:
-    return TABLE_VIEW_BY.get(data_type, "Default")
-
-
-def _first_spec_name(player: dict[str, Any]) -> Any:
-    specs = player.get("specs") or []
-    if specs and isinstance(specs[0], dict):
-        return specs[0].get("spec")
-    return player.get("spec")
-
-
-def _parse_composition_rows(
-    block: dict[str, Any],
-    total_time: int,
-) -> list[dict[str, Any]]:
-    """Summary WCL : roster dans ``data.composition`` (pas ``entries``)."""
-    rows: list[dict[str, Any]] = []
-    item_level = block.get("itemLevel")
-    for player in block.get("composition") or []:
-        if not isinstance(player, dict):
-            continue
-        extra = dict(player)
-        if item_level is not None:
-            extra.setdefault("itemLevel", item_level)
-        rows.append(
-            _stat_row_from_entry(
-                extra,
-                "summary",
-                player_name=str(player.get("name") or "unknown"),
-                player_id=player.get("id"),
-                class_name=player.get("type"),
-                spec_name=_first_spec_name(player),
-                total_time=total_time,
-            )
-        )
-    return rows
-
-
-def _parse_auras_rows(
-    block: dict[str, Any],
-    metric: str,
-    total_time: int,
-    *,
-    player_name: str = "unknown",
-    player_id: Any = None,
-    class_name: Any = None,
-    spec_name: Any = None,
-) -> list[dict[str, Any]]:
-    """Buffs/Debuffs WCL : ``data.auras`` (uptime par aura, parfois sans joueur)."""
-    rows: list[dict[str, Any]] = []
-    for aura in block.get("auras") or []:
-        if not isinstance(aura, dict):
-            continue
-        rows.append(
-            _stat_row_from_entry(
-                aura,
-                metric,
-                player_name=player_name,
-                player_id=player_id,
-                class_name=class_name,
-                spec_name=spec_name,
-                total_time=total_time,
-            )
-        )
-    return rows
-
-
-def _entry_label(entry: dict[str, Any]) -> str:
-    for key in ("name", "abilityName", "targetName"):
-        value = entry.get(key)
-        if value:
-            return str(value)
-    if entry.get("id") is not None:
-        return str(entry["id"])
-    return "unknown"
-
-
-def _stat_row_from_entry(
-    entry: dict[str, Any],
-    metric: str,
-    *,
-    player_name: str,
-    player_id: Any,
-    class_name: Any,
-    spec_name: Any,
-    total_time: int,
-) -> dict[str, Any]:
-    total = int(entry.get("total") or entry.get("amount") or entry.get("count") or 0)
-    active = int(
-        entry.get("activeTime")
-        or entry.get("totalUptime")
-        or entry.get("uptime")
-        or total
-        or total_time
-        or 0
+def events_page_size() -> int:
+    """Taille de page events (100-10000). Variable Airflow ``wcl_events_page_size``."""
+    raw = _airflow_variable("wcl_events_page_size") or os.environ.get(
+        "WCL_EVENTS_PAGE_SIZE", str(EVENTS_PAGE_LIMIT_MAX)
     )
-    rate = (total / active * 1000.0) if active > 0 else 0.0
-    extra = dict(entry)
-    extra.setdefault("playerName", player_name)
-    if player_id is not None:
-        extra.setdefault("playerId", player_id)
-    return {
-        "player_name": player_name,
-        "player_id": player_id,
-        "class_name": class_name,
-        "spec_name": spec_name,
-        "metric": metric,
-        "total_amount": total,
-        "active_time_ms": active,
-        "rate_per_sec": rate,
-        "extra": extra,
+    try:
+        return min(EVENTS_PAGE_LIMIT_MAX, max(100, int(raw.strip())))
+    except ValueError:
+        return EVENTS_PAGE_LIMIT_MAX
+
+
+def events_include_resources() -> bool:
+    """Inclure HP/ressources/position dans chaque event (``includeResources``).
+
+    Donnée brute maximale (PV, mana, x/y, ilvl par event) au prix de payloads
+    plus gros. Variable Airflow ``wcl_events_include_resources`` (défaut: true).
+    """
+    raw = _airflow_variable("wcl_events_include_resources") or os.environ.get(
+        "WCL_EVENTS_INCLUDE_RESOURCES", "true"
+    )
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def master_data_rows(
+    report_code: str,
+    master_data: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Normalise ``masterData`` API en lignes bronze (info, acteurs, abilities).
+
+    - info : version log/jeu + langue du report
+    - acteurs : ``actor_id`` est l'ID **local au report** référencé par les
+      events (``sourceID`` / ``targetID``) ; ``pet_owner_id`` pointe vers
+      l'``actor_id`` du propriétaire pour les pets.
+    - abilities : ``ability_game_id`` correspond à ``abilityGameID`` des events.
+    """
+    actors = master_data.get("actors") or []
+    abilities = master_data.get("abilities") or []
+
+    info_row = {
+        "report_code": report_code,
+        "log_version": master_data.get("logVersion"),
+        "game_version": master_data.get("gameVersion"),
+        "lang": master_data.get("lang"),
+        "actors_count": len(actors),
+        "abilities_count": len(abilities),
     }
 
+    actor_rows = [
+        {
+            "report_code": report_code,
+            "actor_id": actor.get("id"),
+            "game_id": actor.get("gameID"),
+            "name": actor.get("name"),
+            "actor_type": actor.get("type"),
+            "sub_type": actor.get("subType"),
+            "pet_owner_id": actor.get("petOwner"),
+            "server": actor.get("server"),
+            "icon": actor.get("icon"),
+        }
+        for actor in actors
+        if isinstance(actor, dict)
+    ]
 
-def parse_table_entries(table_data: Any, metric: str) -> list[dict[str, Any]]:
-    """Extrait les lignes depuis la réponse ``table`` WCL (formats entries, composition, auras)."""
-    block = _table_entries_block(table_data)
-    entries = block.get("entries") or []
-    total_time = int(block.get("totalTime") or 0)
+    ability_rows = [
+        {
+            "report_code": report_code,
+            "ability_game_id": ability.get("gameID"),
+            "name": ability.get("name"),
+            "ability_type": ability.get("type"),
+            "icon": ability.get("icon"),
+        }
+        for ability in abilities
+        if isinstance(ability, dict)
+    ]
+
+    return info_row, actor_rows, ability_rows
+
+
+def event_rows_from_page(
+    report_code: str,
+    page_index: int,
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Events bruts → lignes bronze : colonnes de navigation + JSON intégral.
+
+    Seuls les champs *universels* sont extraits en colonnes (jointures /
+    filtres ClickHouse). TOUT l'event reste dans ``event_json`` : amount,
+    hitType, gear, talents, auras, classResources, x/y, etc. — aucune perte.
+    """
     rows: list[dict[str, Any]] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        subentries = entry.get("subentries") or entry.get("subEntries")
-        if subentries:
-            player_name = str(entry.get("name") or entry.get("playerName") or "unknown")
-            player_id = entry.get("id")
-            class_name = entry.get("type")
-            spec_name = entry.get("spec")
-            for sub in subentries:
-                if not isinstance(sub, dict):
-                    continue
-                rows.append(
-                    _stat_row_from_entry(
-                        sub,
-                        metric,
-                        player_name=player_name,
-                        player_id=player_id,
-                        class_name=class_name,
-                        spec_name=spec_name,
-                        total_time=total_time,
-                    )
-                )
+    for idx, event in enumerate(events):
+        if not isinstance(event, dict):
             continue
         rows.append(
-            _stat_row_from_entry(
-                entry,
-                metric,
-                player_name=_entry_label(entry),
-                player_id=entry.get("id"),
-                class_name=entry.get("type"),
-                spec_name=entry.get("spec"),
-                total_time=total_time,
-            )
+            {
+                "report_code": report_code,
+                "fight_id": event.get("fight"),
+                "page_index": page_index,
+                "event_index": idx,
+                "timestamp_ms": event.get("timestamp"),
+                "event_type": event.get("type"),
+                "source_id": event.get("sourceID"),
+                "source_instance": event.get("sourceInstance"),
+                "target_id": event.get("targetID"),
+                "target_instance": event.get("targetInstance"),
+                "ability_game_id": event.get("abilityGameID"),
+                "event_json": json.dumps(event, ensure_ascii=False),
+            }
         )
+    return rows
 
-    if metric == "summary":
-        rows.extend(_parse_composition_rows(block, total_time))
 
-    if metric in ("buffs", "debuffs"):
-        if rows:
-            # entries + subentries (viewBy Source) : compléter si auras au niveau joueur
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                subentries = entry.get("subentries") or entry.get("subEntries")
-                if subentries:
-                    continue
-                nested_auras = entry.get("auras")
-                if nested_auras:
-                    rows.extend(
-                        _parse_auras_rows(
-                            {"auras": nested_auras},
-                            metric,
-                            total_time,
-                            player_name=str(entry.get("name") or "unknown"),
-                            player_id=entry.get("id"),
-                            class_name=entry.get("type"),
-                            spec_name=entry.get("spec"),
-                        )
-                    )
-        else:
-            rows.extend(_parse_auras_rows(block, metric, total_time))
+def player_details_rows(
+    report_code: str,
+    payload: Any,
+) -> list[dict[str, Any]]:
+    """``playerDetails`` API → 1 ligne par joueur et par rôle.
 
+    Structure API : ``{ data: { playerDetails: { tanks: [], healers: [], dps: [] } } }``.
+    ``player_guid`` = GUID WoW persistant (joint le roster guilde).
+    ``combatant_info_json`` = stats / talents / gear complets (bruts).
+    """
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(payload, dict):
+        return []
+
+    block = payload.get("data") or payload
+    details = block.get("playerDetails") if isinstance(block, dict) else None
+    if not isinstance(details, dict):
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for role in ("tanks", "healers", "dps"):
+        for player in details.get(role) or []:
+            if not isinstance(player, dict):
+                continue
+            rows.append(
+                {
+                    "report_code": report_code,
+                    "role": role,
+                    "player_id": player.get("id"),
+                    "player_guid": player.get("guid"),
+                    "player_name": player.get("name"),
+                    "server": player.get("server"),
+                    "region": player.get("region"),
+                    "class_name": player.get("type"),
+                    "icon": player.get("icon"),
+                    "min_item_level": player.get("minItemLevel"),
+                    "max_item_level": player.get("maxItemLevel"),
+                    "potion_use": player.get("potionUse"),
+                    "healthstone_use": player.get("healthstoneUse"),
+                    "specs_json": json.dumps(player.get("specs") or [], ensure_ascii=False),
+                    "combatant_info_json": json.dumps(
+                        player.get("combatantInfo") or {}, ensure_ascii=False
+                    ),
+                    "player_json": json.dumps(player, ensure_ascii=False),
+                }
+            )
     return rows
 
 
@@ -1082,47 +1062,95 @@ def fetch_report_fights(report_code: str) -> dict[str, Any]:
     return report
 
 
-def fetch_fight_table_raw(
+def fetch_report_master_data(report_code: str) -> dict[str, Any]:
+    """``masterData`` d'un report : acteurs (id → nom) + abilities + versions."""
+    _throttle()
+    data = graphql_request(MASTER_DATA_QUERY, {"code": report_code})
+    report = (data.get("reportData") or {}).get("report") or {}
+    return report.get("masterData") or {}
+
+
+def fetch_events_page(
     report_code: str,
-    start_time_ms: int,
-    end_time_ms: int,
-    data_type: str,
-) -> Any:
-    """Une table WCL brute pour une plage de combat et un ``TableDataType``."""
-    if start_time_ms >= end_time_ms:
-        return None
+    start_time_ms: float,
+    end_time_ms: float,
+    *,
+    limit: int | None = None,
+    include_resources: bool | None = None,
+) -> dict[str, Any]:
+    """Une page d'events bruts (``dataType: All``).
+
+    Retourne ``{"data": [events], "nextPageTimestamp": int | None}``.
+    ``nextPageTimestamp`` est le ``startTime`` à passer pour la page suivante.
+    """
     _throttle()
     data = graphql_request(
-        FIGHT_TABLE_QUERY,
+        EVENTS_PAGE_QUERY,
         {
             "code": report_code,
             "startTime": float(start_time_ms),
             "endTime": float(end_time_ms),
-            "dataType": data_type,
-            "viewBy": view_by_for_data_type(data_type),
+            "limit": int(limit if limit is not None else events_page_size()),
+            "includeResources": bool(
+                include_resources if include_resources is not None else events_include_resources()
+            ),
         },
     )
     report = (data.get("reportData") or {}).get("report") or {}
-    return report.get("table")
+    block = report.get("events") or {}
+    return {
+        "data": block.get("data") or [],
+        "nextPageTimestamp": block.get("nextPageTimestamp"),
+    }
 
 
-def fetch_fight_tables(
+def iter_report_events_pages(
     report_code: str,
-    start_time_ms: int,
-    end_time_ms: int,
-) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
-    """Toutes les tables WCL pour un combat : lignes parsées + JSON brut par dataType."""
-    if start_time_ms >= end_time_ms:
-        return {}, {}
+    start_time_ms: float,
+    end_time_ms: float,
+):
+    """Itère toutes les pages d'events d'un report (génère ``(page_index, events)``).
 
-    parsed: dict[str, list[dict[str, Any]]] = {}
-    raw_by_type: dict[str, Any] = {}
-    for data_type in WCL_TABLE_DATA_TYPES:
-        metric = metric_slug_for_data_type(data_type)
-        table_data = fetch_fight_table_raw(report_code, start_time_ms, end_time_ms, data_type)
-        raw_by_type[data_type] = table_data
-        parsed[metric] = parse_table_entries(table_data, metric)
-    return parsed, raw_by_type
+    Pagination par curseur : ``nextPageTimestamp`` → ``startTime`` suivant,
+    jusqu'à épuisement (``nextPageTimestamp`` null). Times **relatifs** au
+    début du report (comme ``fights.startTime`` / ``endTime``).
+    """
+    cursor = float(start_time_ms)
+    end = float(end_time_ms)
+    page_index = 0
+    while cursor < end:
+        payload = fetch_events_page(report_code, cursor, end)
+        events = payload.get("data") or []
+        if events:
+            yield page_index, events
+        next_ts = payload.get("nextPageTimestamp")
+        if next_ts is None:
+            break
+        next_cursor = float(next_ts)
+        if next_cursor <= cursor:
+            # Garde-fou anti-boucle infinie (curseur API qui n'avance pas).
+            break
+        cursor = next_cursor
+        page_index += 1
+
+
+def fetch_report_player_details(
+    report_code: str,
+    start_time_ms: float,
+    end_time_ms: float,
+) -> Any:
+    """``playerDetails`` (specs, ilvl, talents, gear) sur une plage du report."""
+    _throttle()
+    data = graphql_request(
+        PLAYER_DETAILS_QUERY,
+        {
+            "code": report_code,
+            "startTime": float(start_time_ms),
+            "endTime": float(end_time_ms),
+        },
+    )
+    report = (data.get("reportData") or {}).get("report") or {}
+    return report.get("playerDetails")
 
 
 def fight_rows_from_report(report_code: str, report: dict[str, Any]) -> list[dict[str, Any]]:
