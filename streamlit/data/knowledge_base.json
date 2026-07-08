@@ -1,0 +1,129 @@
+{
+  "competencies": {
+    "C1": {
+      "block": "Bloc 1",
+      "title": "Analyser l’expression d’un besoin de projet data",
+      "summary": "Analyser un besoin métier dans une étude de faisabilité, questionner les parties prenantes, valider les orientations et sélectionner les hypothèses techniques du projet."
+    },
+    "C2": {
+      "block": "Bloc 1",
+      "title": "Cartographier les données disponibles",
+      "summary": "Référencer les usages, sources, métadonnées et données pour valider les hypothèses techniques du projet data."
+    },
+    "C3": {
+      "block": "Bloc 1",
+      "title": "Concevoir un cadre technique d’exploitation des données",
+      "summary": "Analyser les contraintes techniques, les moyens et la cartographie des données pour définir une réponse technique adaptée, conforme au RGPD et éco-responsable."
+    },
+    "C4": {
+      "block": "Bloc 1",
+      "title": "Réaliser une veille technique et réglementaire",
+      "summary": "Sélectionner des sources, collecter et traiter les informations pour formuler des recommandations projet à jour."
+    },
+    "C5": {
+      "block": "Bloc 1",
+      "title": "Planifier la réalisation d’un projet data",
+      "summary": "Définir les étapes, moyens, responsabilités, risques, indicateurs et méthodes de suivi nécessaires à la mise en œuvre du projet."
+    },
+    "C6": {
+      "block": "Bloc 1",
+      "title": "Superviser la réalisation d’un projet data",
+      "summary": "Organiser les méthodes, outils de travail et communications entre parties prenantes pour accompagner l’équipe dans la réussite du projet."
+    },
+    "C7": {
+      "block": "Bloc 1",
+      "title": "Communiquer tout au long du projet data",
+      "summary": "Élaborer une stratégie et des supports de communication pour informer les parties prenantes des orientations, réalisations, impacts et opportunités."
+    },
+    "C8": {
+      "block": "Bloc 2",
+      "title": "Automatiser l’extraction de données",
+      "summary": "Extraire automatiquement des données depuis un service web, une page web, un fichier, une base de données ou un système big data avec un script adapté.",
+      "expected": "Script fonctionnel, versionné, avec point de lancement, dépendances, connexions, traitement, gestion des erreurs et sauvegarde des résultats."
+    },
+    "C9": {
+      "block": "Bloc 2",
+      "title": "Développer des requêtes SQL d’extraction",
+      "summary": "Écrire des requêtes SQL pour extraire des données depuis un SGBD ou un système big data afin de préparer la collecte.",
+      "expected": "Requêtes fonctionnelles et documentées : sélections, filtres, conditions, jointures et optimisations."
+    },
+    "C10": {
+      "block": "Bloc 2",
+      "title": "Développer des règles d’agrégation",
+      "summary": "Programmer l’agrégation de données issues de plusieurs sources, supprimer les entrées corrompues et homogénéiser les formats.",
+      "expected": "Script fonctionnel, versionné et documenté, produisant un jeu de données agrégé, nettoyé et normalisé."
+    },
+    "C11": {
+      "block": "Bloc 2",
+      "title": "Créer une base de données dans le respect du RGPD",
+      "summary": "Élaborer les modèles conceptuels et physiques, choisir et créer la base, importer les données et intégrer les exigences RGPD.",
+      "expected": "Modèles conformes, base fonctionnelle, script d’import opérationnel, registre et procédures RGPD documentés."
+    },
+    "C12": {
+      "block": "Bloc 2",
+      "title": "Partager le jeu de données",
+      "summary": "Configurer des interfaces logicielles et créer des interfaces programmables pour mettre le jeu de données à disposition.",
+      "expected": "API REST fonctionnelle, documentée, avec endpoints, accès, authentification ou autorisation, et récupération des données nécessaires."
+    },
+    "C13": {
+      "block": "Bloc 3",
+      "title": "Modéliser la structure d’un entrepôt de données",
+      "summary": "S’appuyer sur les dimensions et les faits pour organiser les données et optimiser les requêtes analytiques."
+    },
+    "C14": {
+      "block": "Bloc 3",
+      "title": "Créer un entrepôt de données",
+      "summary": "Créer un entrepôt à partir des paramètres du projet, des contraintes techniques et de la modélisation pour soutenir l’analyse et l’aide à la décision."
+    },
+    "C15": {
+      "block": "Bloc 3",
+      "title": "Intégrer les ETL nécessaires",
+      "summary": "Mettre en place les ETL en entrée et sortie de l’entrepôt pour garantir la qualité et le bon formatage des données selon les modèles établis."
+    },
+    "C16": {
+      "block": "Bloc 3",
+      "title": "Gérer l’entrepôt de données",
+      "summary": "Administrer et superviser l’entrepôt dans le respect du RGPD pour garantir les accès, les évolutions et le maintien en condition opérationnelle."
+    },
+    "C17": {
+      "block": "Bloc 3",
+      "title": "Implémenter des variations de dimensions",
+      "summary": "Appliquer la méthode adaptée aux changements de dimensions afin d’historiser les évolutions et maintenir la capacité d’analyse."
+    },
+    "C18": {
+      "block": "Bloc 4",
+      "title": "Concevoir l’architecture du data lake",
+      "summary": "Sélectionner les technologies selon le volume, la variété et la vitesse des données pour définir l’architecture technique optimale."
+    },
+    "C19": {
+      "block": "Bloc 4",
+      "title": "Intégrer les composants d’infrastructure du data lake",
+      "summary": "Appliquer la procédure adaptée pour assurer l’acquisition, le stockage et la mise à disposition du catalogue de données."
+    },
+    "C20": {
+      "block": "Bloc 4",
+      "title": "Gérer le catalogue des données",
+      "summary": "Tenir compte de la nature, des sources d’alimentation et du cycle de vie des données dans le respect du RGPD."
+    },
+    "C21": {
+      "block": "Bloc 4",
+      "title": "Implémenter les règles de gouvernance des données",
+      "summary": "Sécuriser la recherche, la récupération et l’ajout de données pour respecter les règles de gouvernance et de protection des données."
+    }
+  },
+  "blocks": {
+    "Bloc 1": "Piloter la conduite d’un projet data. Compétences C1 à C7.",
+    "Bloc 2": "Réaliser la collecte, le stockage et la mise à disposition des données. Compétences C8 à C12. Évaluation E4.",
+    "Bloc 3": "Élaborer et maintenir un entrepôt de données. Compétences C13 à C17. Évaluations E5 et E6.",
+    "Bloc 4": "Encadrer la collecte massive et la mise à disposition des données avec un data lake. Compétences C18 à C21. Évaluation E7."
+  },
+  "evaluations": {
+    "E1": "Étude de cas liée à C1. Livrable : grilles d’entretien. Évaluation : présentation orale individuelle.",
+    "E2": "Mise en situation liée à C1, C2, C3, C4 et C6. Livrable : rapport professionnel individuel. Évaluation : correction du rapport et soutenance orale.",
+    "E3": "Jeu de rôle de lancement d’un projet data lié à C5, C6 et C7. Livrables : support de présentation et documents associés.",
+    "E4": "Mise en situation du bloc 2 liée à C8, C9, C10, C11 et C12. Livrable : rapport professionnel individuel. Évaluation : correction du rapport et soutenance orale.",
+    "E5": "Mise en situation liée à C13, C14 et C15 sur la mise en place d’un entrepôt de données. Livrable : rapport professionnel individuel.",
+    "E6": "Étude de cas liée à C16 et C17 sur la maintenance et l’évolution d’un entrepôt de données. Livrable : rapport professionnel.",
+    "E7": "Mise en situation liée au data lake, notamment C19, C20 et C21. Livrable : rapport professionnel."
+  }
+}
